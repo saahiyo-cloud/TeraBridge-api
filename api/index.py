@@ -8,6 +8,7 @@ import json
 from collections import OrderedDict
 from flask import Flask, request, jsonify, Response
 import urllib.parse
+import re
 
 # Load environment variables from .env file if present
 try:
@@ -292,6 +293,9 @@ def resolve():
             "message": "Missing required parameter 'url' or 'link'."
         }), 400
 
+    # Sanitize link (strip whitespaces, zero-width spaces, directional formatting markers)
+    link = re.sub(r'[\s\u200b\u200c\u200d\ufeff\u202a\u202b\u202c\u202d\u202e]+', '', link)
+
     # Ensure action code matches downloader expected format ('d', 's', or 'l')
     act_lower = action.lower()
     if act_lower in ("s", "stream", "streaming"):
@@ -385,6 +389,9 @@ def resolve():
         return resp
 
     except Exception as e:
+        import traceback
+        import sys
+        traceback.print_exc(file=sys.stdout)
         return jsonify({
             "status": "error",
             "message": f"Server encountered exception: {str(e)}"
