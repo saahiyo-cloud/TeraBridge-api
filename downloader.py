@@ -6,6 +6,8 @@ import re
 import os
 import zipfile
 import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Set stdout encoding to UTF-8 to prevent UnicodeEncodeError on Windows
 if sys.version_info >= (3, 7):
@@ -47,9 +49,30 @@ HEADERS = {
 def qp():
     return f"app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={JSTOKEN}&dp-logid={LOGID}"
 
-session = requests.Session()
-session.headers.update(HEADERS)
-session.cookies.update(COOKIES_DICT)
+def _create_session():
+    """Create a requests session with connection pooling and automatic retry."""
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    s.cookies.update(COOKIES_DICT)
+
+    # Retry strategy: 3 retries with exponential backoff on server errors
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+    )
+    # Connection pooling: keep up to 10 connections, max 20 in the pool
+    adapter = HTTPAdapter(
+        pool_connections=10,
+        pool_maxsize=20,
+        max_retries=retry_strategy,
+    )
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+session = _create_session()
 
 def parse_surl(url):
     """Extract and clean the shorturl key from a Terabox share link."""
