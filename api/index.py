@@ -50,14 +50,6 @@ RATE_LIMIT_WINDOW = 60  # seconds
 API_KEY           = os.environ.get("API_KEY")                    # API Key for securing endpoints (REQUIRED in production)
 HMAC_SECRET       = os.environ.get("HMAC_SECRET") or API_KEY        # HMAC secret (falls back to API_KEY if not set; required if API_KEY is set)
 REQUIRE_API_KEY   = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0", "false", "no")
-# When REQUIRE_API_KEY is true (or auto + no API_KEY set), all protected endpoints reject requests with no/wrong key.
-# When REQUIRE_API_KEY is false, endpoints stay open (useful for local dev only).
-
-# ─── Trusted proxy configuration (for client-IP resolution) ─────────
-# Comma-separated CIDR list of reverse proxies whose X-Forwarded-For chains we trust.
-# Examples: TRUSTED_PROXIES=127.0.0.1/32,10.0.0.0/8   (add your LB's CIDR)
-# Vercel is auto-trusted when the VERCEL=1 env var is set (the platform injects
-# x-vercel-forwarded-for itself, which we use as the single source of truth there).
 TRUSTED_PROXY_CIDRS_RAW = os.environ.get("TRUSTED_PROXIES", "").strip()
 
 def _parse_trusted_cidrs(raw):
