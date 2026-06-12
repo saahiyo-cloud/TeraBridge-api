@@ -5,6 +5,7 @@ import threading
 import hashlib
 import hmac
 import json
+import ipaddress
 from collections import OrderedDict
 from flask import Flask, request, jsonify, Response
 import urllib.parse
@@ -46,7 +47,100 @@ CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL", 60))         # Cache respons
 CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", 256)) # LRU eviction after 256 entries
 RATE_LIMIT_RPM    = int(os.environ.get("RATE_LIMIT_RPM", 30))    # 30 requests per minute per IP
 RATE_LIMIT_WINDOW = 60  # seconds
-API_KEY           = os.environ.get("API_KEY")                    # API Key for securing endpoints
+API_KEY           = os.environ.get("API_KEY")                    # API Key for securing endpoints (REQUIRED in production)
+HMAC_SECRET       = os.environ.get("HMAC_SECRET") or API_KEY        # HMAC secret (falls back to API_KEY if not set; required if API_KEY is set)
+REQUIRE_API_KEY   = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0", "false", "no")
+# When REQUIRE_API_KEY is true (or auto + no API_KEY set), all protected endpoints reject requests with no/wrong key.
+# When REQUIRE_API_KEY is false, endpoints stay open (useful for local dev only).
+
+# ─── Trusted proxy configuration (for client-IP resolution) ─────────
+# Comma-separated CIDR list of reverse proxies whose X-Forwarded-For chains we trust.
+# Examples: TRUSTED_PROXIES=127.0.0.1/32,10.0.0.0/8   (add your LB's CIDR)
+# Vercel is auto-trusted when the VERCEL=1 env var is set (the platform injects
+# x-vercel-forwarded-for itself, which we use as the single source of truth there).
+TRUSTED_PROXY_CIDRS_RAW = os.environ.get("TRUSTED_PROXIES", "").strip()
+
+def _parse_trusted_cidrs(raw):
+    """Parse a comma-separated CIDR list. Empty entries are ignored."""
+    cidrs = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            cidrs.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError as e:
+            print(f"[TeraBridge][WARN] Ignoring invalid TRUSTED_PROXIES entry {entry!r}: {e}")
+    return cidrs
+
+TRUSTED_PROXY_CIDRS = _parse_trusted_cidrs(TRUSTED_PROXY_CIDRS_RAW)
+# Vercel runs behind its own edge; the platform sets VERCEL=1 and forwards a
+# single client IP via x-vercel-forwarded-for. Trust that header in that case.
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+
+def _peer_ip():
+    """Return the immediate TCP peer as an ipaddress.IPv4Address / IPv6Address, or None."""
+    addr = request.remote_addr
+    if not addr:
+        return None
+    try:
+        # Strip a zone id if the WSGI server passed an IPv6 zone (e.g. "fe80::1%eth0")
+        return ipaddress.ip_address(addr.split("%")[0])
+    except ValueError:
+        return None
+
+def _is_trusted_peer():
+    """True if the immediate TCP peer is in TRUSTED_PROXY_CIDRS (or we're on Vercel)."""
+    if ON_VERCEL:
+        return True
+    if not TRUSTED_PROXY_CIDRS:
+        return False
+    peer = _peer_ip()
+    if peer is None:
+        return False
+    return any(peer in cidr for cidr in TRUSTED_PROXY_CIDRS)
+
+def _client_ip():
+    """
+    Resolve the *real* client IP, taking reverse proxies into account.
+
+    - On Vercel: trust x-vercel-forwarded-for (single hop, set by the platform).
+    - Behind a configured trusted proxy: take the *rightmost* untrusted entry in
+      X-Forwarded-For (i.e. the value added by the closest trusted hop). Walking
+      right-to-left stops at the first IP that's NOT in the trusted set.
+    - Direct connection (no trusted proxy): return request.remote_addr unchanged.
+      In this mode X-Forwarded-For is ignored entirely so a client cannot spoof
+      their way around the per-IP rate limiter.
+    """
+    if ON_VERCEL:
+        v = request.headers.get("X-Vercel-Forwarded-For")
+        if v:
+            return v.split(",")[0].strip()
+
+    peer = _peer_ip()
+    if peer is None:
+        return request.remote_addr or "unknown"
+
+    if not _is_trusted_peer():
+        # Direct connection — never trust X-Forwarded-For from an untrusted source.
+        return str(peer)
+
+    xff = request.headers.get("X-Forwarded-For", "")
+    if not xff:
+        return str(peer)
+
+    # Walk right-to-left. The hop just inside the trusted boundary is the client.
+    chain = [h.strip() for h in xff.split(",") if h.strip()]
+    candidate = str(peer)
+    for hop in reversed(chain):
+        try:
+            hop_ip = ipaddress.ip_address(hop.split("%")[0])
+        except ValueError:
+            return hop  # malformed entry — best effort, return as-is
+        if any(hop_ip in cidr for cidr in TRUSTED_PROXY_CIDRS):
+            continue  # still inside the trusted prefix, keep walking
+        return str(hop_ip)
+    return candidate
 
 # ─── Thread-safe LRU Cache ──────────────────────────────────────────
 class ResponseCache:
@@ -177,42 +271,82 @@ _cleanup_thread.start()
 
 # ─── API Key Verification Helper ────────────────────────────────────
 def check_auth():
-    expected_key = API_KEY or "supercloudkey"
-    
-    # 1. Check custom header
+    """
+    Verify the request carries a valid API key.
+
+    Accepted transports (in priority order):
+      1. X-API-Key header
+      2. Authorization: Bearer <key>
+      3. ?key=...  or  ?api_key=...  query parameter
+      4. JSON body {"key": ...} or {"api_key": ...}
+
+    Behavior is controlled by REQUIRE_API_KEY:
+      - True  (or unset, when API_KEY is configured): every protected endpoint
+              must carry a valid key. No key configured at all also fails closed.
+      - False (or unset, when API_KEY is *not* configured): endpoints are open.
+              This is the legacy "auto" mode and is meant for local dev only.
+              A loud warning is logged at startup when it kicks in.
+    """
+    # Fail-closed when API_KEY is not configured (unless explicitly disabled).
+    if not API_KEY:
+        if REQUIRE_API_KEY:
+            # Operator asked for strict auth but didn't set a key: reject.
+            return False
+        # Auto/disabled mode with no key: open access (dev only).
+        return True
+
+    # 1. Custom header
     client_key = request.headers.get("X-API-Key")
-    
-    # 2. Check standard Authorization header
+
+    # 2. Standard Authorization: Bearer
     if not client_key:
         auth_header = request.headers.get("Authorization") or ""
         if auth_header.startswith("Bearer "):
-            client_key = auth_header[7:].strip()
-            
-    # 3. Check query parameters (fallback for media players/browser requests)
+            client_key = auth_header[len("Bearer "):].strip()
+
+    # 3. Query parameter (fallback for media players / browser <video> tags)
     if not client_key:
         client_key = request.args.get("key") or request.args.get("api_key")
-        
-    # 4. Check JSON body if applicable
+
+    # 4. JSON body
     if not client_key and request.is_json:
         try:
             client_key = request.json.get("key") or request.json.get("api_key")
         except Exception:
             pass
-        
-    # Authorize if it matches the configured key or the fallback test key
-    return client_key in (expected_key, "supercloudkey")
+
+    if not client_key:
+        return False
+
+    # Constant-time comparison; both values must be the same length for a hit.
+    return hmac.compare_digest(client_key, API_KEY)
 
 
 # ─── HMAC Signature Helpers for URL Security ──────────────────────────
 def generate_signature(param1, param2, param3=""):
-    secret = API_KEY or "supercloudkey"
+    """
+    HMAC-SHA256 signature over `param1|param2|param3` using HMAC_SECRET.
+
+    HMAC_SECRET defaults to API_KEY when unset. If neither is configured,
+    signing is disabled and an empty string is returned, which causes
+    verify_signature to fail closed.
+    """
+    if not HMAC_SECRET:
+        return ""
     message = f"{param1}|{param2}|{param3}"
-    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(HMAC_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
+
 
 def verify_signature(param1, param2, param3, signature):
-    if not signature:
+    """
+    Constant-time HMAC verification. Returns False on any missing input
+    or when HMAC signing is not configured.
+    """
+    if not signature or not HMAC_SECRET:
         return False
     expected = generate_signature(param1, param2, param3)
+    if not expected:
+        return False
     return hmac.compare_digest(expected, signature)
 
 
@@ -256,9 +390,7 @@ def resolve():
         return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing API key."}), 401
 
     # ── Rate Limiting ──
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    if client_ip:
-        client_ip = client_ip.split(",")[0].strip()
+    client_ip = _client_ip()
 
     if not rate_limiter.is_allowed(client_ip):
         remaining = rate_limiter.remaining(client_ip)
@@ -388,6 +520,9 @@ def resolve():
         resp.headers["X-RateLimit-Remaining"] = str(rate_limiter.remaining(client_ip))
         return resp
 
+    except ValueError as e:
+        # Bad input from the client (e.g. parse_surl couldn't find a valid id).
+        return jsonify({"status": "error", "message": str(e)}), 400
     except Exception as e:
         import traceback
         import sys
@@ -414,9 +549,7 @@ def stream_manifest():
         return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing API key."}), 401
 
     # ── Rate Limiting ──
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    if client_ip:
-        client_ip = client_ip.split(",")[0].strip()
+    client_ip = _client_ip()
 
     if not rate_limiter.is_allowed(client_ip):
         resp = jsonify({
@@ -806,6 +939,11 @@ if __name__ == "__main__":
     is_windows = sys.platform == "win32"
 
     print(f"[TeraBridge] Cache TTL: {CACHE_TTL_SECONDS}s | Rate limit: {RATE_LIMIT_RPM} req/min")
+
+    if not API_KEY and not REQUIRE_API_KEY:
+        print("[TeraBridge][WARNING] API_KEY is not set and REQUIRE_API_KEY is disabled — "
+              "all endpoints are currently OPEN (no authentication). Do not expose this "
+              "instance to the public internet.", flush=True)
 
     if is_windows:
         # On Windows, Waitress's asyncore has a 2s select() timeout that causes

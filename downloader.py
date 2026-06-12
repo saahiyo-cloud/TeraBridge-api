@@ -85,20 +85,90 @@ def _create_session():
 
 session = _create_session()
 
+_SURL_MIN_LEN = 8     # empirical floor; real Terabox surls are 22-23 chars
+_LEADING_ONE_MAX_STRIPS = 4  # never strip more than this many leading '1' chars
+_VALID_SURL = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def parse_surl(url):
-    """Extract and clean the shorturl key from a Terabox share link."""
+    """
+    Extract and clean the shorturl key (`surl`) from a Terabox share link.
+
+    Recognized shapes:
+      - https://terabox.com/s/1ABCDEFG...        (path form)
+      - https://1024terabox.com/s/1ABCDEFG...
+      - https://terabox.com/share/list?surl=1ABCDEFG...   (query form)
+      - https://terabox.com/s/1ABCDEFG?fid=...
+      - 1ABCDEFG...                                (bare surl)
+
+    Cleaning rules:
+      1. The result must match [A-Za-z0-9_-]+. Anything else (including the
+         original URL when no marker is found) raises ValueError.
+      2. If the result is longer than 22 chars and starts with a leading run
+         of `1`s, strip up to _LEADING_ONE_MAX_STRIPS leading '1's. This matches
+         observed Terabox behavior where the URL-path form prepends a '1' to
+         a base62-ish identifier (so `/s/1ABC...` and `?surl=ABC...` resolve
+         to the same share). The strip is bounded so a malicious or malformed
+         input like '1111...1' cannot shrink to a single character.
+      3. After cleaning, the result must be at least _SURL_MIN_LEN chars.
+
+    Returns the cleaned surl string. Raises ValueError on invalid input.
+    """
+    if not isinstance(url, str) or not url:
+        raise ValueError("parse_surl: empty or non-string input")
+
+    surl = None
+
+    # Query form: ?surl=...  (must check before path form so we don't get fooled
+    # by a URL that has both `?surl=` and `/s/` in it)
     if "surl=" in url:
-        surl = url.split("surl=")[1].split("&")[0]
+        after = url.split("surl=", 1)[1]
+        surl = after.split("&", 1)[0]
     elif "/s/" in url:
-        surl = url.split("/s/")[1].split("?")[0]
+        after = url.split("/s/", 1)[1]
+        surl = after.split("?", 1)[0].split("#", 1)[0]
     else:
-        surl = url
-    
-    surl = surl.split("/")[-1]
-    
-    while len(surl) > 22 and surl.startswith("1"):
-        surl = surl[1:]
-        
+        # No `/s/` or `?surl=` marker found.
+        # Heuristic: a real Terabox share link is always an http(s) URL with a
+        # recognized marker. A bare identifier is one of:
+        #   - just letters/digits/underscore/hyphen (no slashes, no scheme, no dots)
+        #   - *not* starting with "http"
+        # Anything else (a URL without a marker, a path with multiple slashes,
+        # anything containing a dot in the path) is rejected.
+        stripped = url.strip()
+        if "://" in stripped or "/" in stripped or "." in stripped:
+            raise ValueError(f"parse_surl: no surl marker found in {url!r}")
+        if stripped.startswith("http"):
+            raise ValueError(f"parse_surl: malformed input {url!r}")
+        if _VALID_SURL.match(stripped) and len(stripped) >= _SURL_MIN_LEN:
+            surl = stripped
+
+    if not surl:
+        raise ValueError(f"parse_surl: no surl found in {url!r}")
+
+    # Drop any trailing path component that may have leaked in.
+    surl = surl.rstrip("/").split("/")[-1]
+
+    if not _VALID_SURL.match(surl):
+        raise ValueError(f"parse_surl: extracted value {surl!r} contains invalid characters")
+
+    # Leading-'1' strip. Mirrors Terabox's convention of prepending a '1' to
+    # the path-form identifier (so /s/1ABC... and ?surl=ABC... resolve to the
+    # same share). Strip at most _LEADING_ONE_MAX_STRIPS leading '1' chars and
+    # only when the result is *still* at least _SURL_MIN_LEN chars long. The
+    # cap on iteration count prevents a pathological input like '1111...1'
+    # from collapsing to a single character.
+    if len(surl) > 22 and surl.startswith("1"):
+        for _ in range(_LEADING_ONE_MAX_STRIPS):
+            if not surl.startswith("1") or len(surl) - 1 < _SURL_MIN_LEN:
+                break
+            surl = surl[1:]
+
+    if len(surl) < _SURL_MIN_LEN:
+        raise ValueError(
+            f"parse_surl: cleaned surl {surl!r} is shorter than the {_SURL_MIN_LEN}-char minimum"
+        )
+
     return surl
 
 def show(label, r):
@@ -139,7 +209,10 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
     except Exception as e:
         return {"errno": -1, "error": f"Failed to resolve session tokens: {e}"}
 
-    surl = parse_surl(link)
+    try:
+        surl = parse_surl(link)
+    except ValueError as e:
+        return {"errno": -3, "error": f"Invalid share link: {e}"}
     list_url = (
         f"{BASE_PUBLIC}/share/list"
         f"?app_id=250528&shorturl={surl}&root=1&order=name&desc=0&showempty=0&web=1&page=1&num=100"
@@ -199,8 +272,13 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
             "error": None,
             "thumbnails": item.get("thumbs"),
             "path": item.get("path"),
-            "is_directory": bool(item.get("isdir"))
+            "is_directory": str(item.get("isdir")) == "1"
         }
+
+        if file_res["is_directory"]:
+            file_res["error"] = "File is a directory"
+            results.append(file_res)
+            continue
 
         if action == "l":
             results.append(file_res)
