@@ -177,7 +177,9 @@ def _request_base_url():
     recognised platform proxy or trusted peer.
     """
     scheme = request.scheme
-    if _is_trusted_peer():
+    if ON_RENDER or ON_VERCEL:
+        scheme = "https"
+    elif _is_trusted_peer():
         forwarded_proto = request.headers.get("X-Forwarded-Proto")
         if forwarded_proto:
             scheme = forwarded_proto.split(",")[0].strip()
