@@ -694,16 +694,29 @@ def stream_segment():
     # SSRF Protection
     try:
         parsed = urllib.parse.urlparse(target_url)
+        if parsed.scheme not in ("http", "https"):
+            return "Forbidden: Unsupported URL scheme.", 403
         domain = parsed.netloc.lower()
+        # Trusted CDN roots that TeraBox hands out for HLS manifest/segment URIs.
+        # An entry that starts with "." is a domain-suffix match; an entry
+        # without a leading dot is matched exactly (e.g. "pcs.baidu.com").
         allowed_suffixes = (
             ".1024terabox.com",
             ".baidu.com",
             ".terabox.com",
             ".teraboxapp.com",
+            ".koofr.net",        # TeraBox HLS segment / manifest CDN
+            ".koofr.eu",
             "pcs.baidu.com",
-            "d.pcs.1024terabox.com"
+            "d.pcs.1024terabox.com",
         )
-        is_allowed = any(domain == suffix or domain.endswith(suffix) for suffix in allowed_suffixes)
+
+        def _host_allowed(host, suffix):
+            if suffix.startswith("."):
+                return host == suffix[1:] or host.endswith(suffix)
+            return host == suffix
+
+        is_allowed = any(_host_allowed(domain, suffix) for suffix in allowed_suffixes)
         if not is_allowed:
             return "Forbidden: Invalid stream host destination.", 403
     except Exception:
