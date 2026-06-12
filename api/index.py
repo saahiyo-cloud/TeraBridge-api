@@ -33,6 +33,7 @@ def handle_options_preflight():
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Headers"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Expose-Headers"] = "*"
         return resp
 
 @app.after_request
@@ -40,6 +41,7 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Expose-Headers"] = "*"
     return response
 
 # ─── Configuration ───────────────────────────────────────────────────
@@ -71,7 +73,7 @@ TRUSTED_PROXY_CIDRS = _parse_trusted_cidrs(TRUSTED_PROXY_CIDRS_RAW)
 # every service instance; when present we trust their respective proxy headers
 # without requiring TRUSTED_PROXIES to be configured.
 ON_VERCEL = bool(os.environ.get("VERCEL"))
-ON_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+ON_RENDER = (os.environ.get("RENDER", "").lower() in ("true", "1", "yes")) or ("RENDER_SERVICE_ID" in os.environ)
 
 # Loopback addresses are always trusted by default — they correspond to a local
 # reverse proxy (nginx, caddy, Render's sidecar, Docker port-mapping) running
