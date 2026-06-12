@@ -316,6 +316,17 @@ def resolve():
         }
 
         for f in res.get("files", []):
+            raw_thumbs = f.get("thumbnails")
+            proxied_thumbs = {}
+            if raw_thumbs and isinstance(raw_thumbs, dict):
+                for k, v in raw_thumbs.items():
+                    if v:
+                        quoted_v = urllib.parse.quote(v)
+                        proxy_url = f"{request.scheme}://{request.host}/api/thumbnail?url={quoted_v}"
+                        if API_KEY:
+                            proxy_url += f"&key={API_KEY}"
+                        proxied_thumbs[k] = proxy_url
+
             file_info = {
                 "filename": f.get("filename"),
                 "size_bytes": f.get("size_bytes"),
@@ -325,7 +336,7 @@ def resolve():
                 "dlink": f.get("dlink"),
                 "stream_ready": f.get("stream_ready"),
                 "error": f.get("error"),
-                "thumbnails": f.get("thumbnails"),
+                "thumbnails": proxied_thumbs if proxied_thumbs else None,
                 "path": f.get("path"),
                 "is_directory": f.get("is_directory")
             }
@@ -521,6 +532,77 @@ def stream_segment():
 
     except Exception as e:
         return f"Segment proxy encountered an error: {str(e)}", 500
+
+
+@app.route("/api/thumbnail", methods=["GET", "OPTIONS"])
+@app.route("/api/stream/thumbnail", methods=["GET", "OPTIONS"])
+def stream_thumbnail():
+    if request.method == "OPTIONS":
+        resp = Response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        return resp
+
+    if not check_auth():
+        return "Unauthorized: Invalid or missing API key.", 401
+
+    url = request.args.get("url") or ""
+    if not url:
+        return "Missing thumbnail URL", 400
+
+    target_url = urllib.parse.unquote(url)
+
+    # SSRF Protection
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        domain = parsed.netloc.lower()
+        allowed_suffixes = (
+            ".1024terabox.com",
+            ".baidu.com",
+            ".terabox.com",
+            ".teraboxapp.com",
+            "pcs.baidu.com",
+            "d.pcs.1024terabox.com",
+            "dm-data.terabox.com"
+        )
+        is_allowed = any(domain == suffix or domain.endswith(suffix) for suffix in allowed_suffixes)
+        if not is_allowed:
+            return "Forbidden: Invalid stream host destination.", 403
+    except Exception:
+        return "Invalid thumbnail URL format", 400
+
+    try:
+        req = session.get(target_url, stream=True, timeout=30)
+        
+        resp_headers = {}
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+        }
+        
+        for key in ("Content-Length", "Content-Type"):
+            if key in req.headers:
+                resp_headers[key] = req.headers[key]
+        
+        if "Content-Type" not in resp_headers:
+            resp_headers["Content-Type"] = "image/jpeg"
+            
+        resp_headers.update(cors_headers)
+        
+        def generate():
+            try:
+                for chunk in req.iter_content(chunk_size=16384):
+                    if chunk:
+                        yield chunk
+            finally:
+                req.close()
+
+        return Response(generate(), status=req.status_code, headers=resp_headers)
+
+    except Exception as e:
+        return f"Thumbnail proxy encountered an error: {str(e)}", 500
 
 
 # ─── Server Entry Point ─────────────────────────────────────────────
