@@ -167,6 +167,20 @@ def _client_ip():
         return str(hop_ip)
     return candidate
 
+def _request_base_url():
+    """Return the public base URL (scheme + host) for building proxy URLs.
+
+    Behind a reverse proxy (Render, Vercel, nginx) Flask sees http even when
+    the client connected over https.  We trust X-Forwarded-Proto from any
+    recognised platform proxy or trusted peer.
+    """
+    scheme = request.scheme
+    if _is_trusted_peer():
+        forwarded_proto = request.headers.get("X-Forwarded-Proto")
+        if forwarded_proto:
+            scheme = forwarded_proto.split(",")[0].strip()
+    return f"{scheme}://{request.host}"
+
 # ─── Thread-safe LRU Cache ──────────────────────────────────────────
 class ResponseCache:
     """Thread-safe in-memory LRU cache with TTL expiry."""
@@ -502,10 +516,10 @@ def resolve():
                     if v:
                         if original_fs_id and surl:
                             sig = generate_signature(surl, original_fs_id, k)
-                            proxy_url = f"{request.scheme}://{request.host}/api/thumbnail?surl={surl}&fs_id={original_fs_id}&size_type={k}&sig={sig}"
+                            proxy_url = f"{_request_base_url()}/api/thumbnail?surl={surl}&fs_id={original_fs_id}&size_type={k}&sig={sig}"
                         else:
                             quoted_v = urllib.parse.quote(v)
-                            proxy_url = f"{request.scheme}://{request.host}/api/thumbnail?url={quoted_v}"
+                            proxy_url = f"{_request_base_url()}/api/thumbnail?url={quoted_v}"
                             if API_KEY:
                                 proxy_url += f"&key={API_KEY}"
                         proxied_thumbs[k] = proxy_url
@@ -514,7 +528,7 @@ def resolve():
             dlink_url = f.get("dlink")
             if dlink_url and original_fs_id and surl:
                 sig = generate_signature(surl, original_fs_id, "")
-                proxy_dlink = f"{request.scheme}://{request.host}/api/download?surl={surl}&fs_id={original_fs_id}&sig={sig}"
+                proxy_dlink = f"{_request_base_url()}/api/download?surl={surl}&fs_id={original_fs_id}&sig={sig}"
             else:
                 proxy_dlink = dlink_url
 
@@ -639,7 +653,7 @@ def stream_manifest():
             if line_stripped and not line_stripped.startswith("#"):
                 quoted_url = urllib.parse.quote(line_stripped)
                 sig = generate_signature(line_stripped, "", "")
-                proxy_url = f"{request.scheme}://{request.host}/api/stream/segment?url={quoted_url}&sig={sig}"
+                proxy_url = f"{_request_base_url()}/api/stream/segment?url={quoted_url}&sig={sig}"
                 proxied_lines.append(proxy_url)
             else:
                 proxied_lines.append(line)
