@@ -536,14 +536,22 @@ def stream_segment():
             return "Forbidden: Invalid stream host destination.", 403
     except Exception:
         return "Invalid segment URL format", 400
-
     try:
-        headers = {}
+        headers = {
+            "User-Agent": UA,
+            "Referer": "https://dm.1024terabox.com/",
+        }
         range_header = request.headers.get("Range")
         if range_header:
             headers["Range"] = range_header
 
-        req = session.get(target_url, headers=headers, stream=True, timeout=30)
+        req = session.get(
+            target_url,
+            headers=headers,
+            cookies=COOKIES_DICT,
+            stream=True,
+            timeout=30
+        )
         
         resp_headers = {}
         cors_headers = {
@@ -649,7 +657,13 @@ def stream_thumbnail():
         return "Invalid thumbnail URL format", 400
 
     try:
-        req = session.get(target_url, stream=True, timeout=30)
+        req = session.get(
+            target_url,
+            headers={"User-Agent": UA, "Referer": "https://dm.1024terabox.com/"},
+            cookies=COOKIES_DICT,
+            stream=True,
+            timeout=30
+        )
         
         resp_headers = {}
         cors_headers = {
