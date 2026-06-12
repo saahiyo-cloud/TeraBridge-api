@@ -5,7 +5,8 @@ import threading
 import hashlib
 import json
 from collections import OrderedDict
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+import urllib.parse
 
 # Load environment variables from .env file if present
 try:
@@ -17,7 +18,7 @@ except ImportError:
 # Add the project root directory to sys.path to resolve downloader module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from downloader import resolve_link
+from downloader import resolve_link, session
 
 app = Flask(__name__)
 
@@ -291,6 +292,171 @@ def resolve():
             "status": "error",
             "message": f"Server encountered exception: {str(e)}"
         }), 500
+
+
+# ─── HLS Streaming Proxy routes ─────────────────────────────────────
+
+@app.route("/api/stream/manifest", methods=["GET", "OPTIONS"])
+@app.route("/api/stream/playlist.m3u8", methods=["GET", "OPTIONS"])
+def stream_manifest():
+    if request.method == "OPTIONS":
+        resp = Response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        return resp
+
+    # ── Rate Limiting ──
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+
+    if not rate_limiter.is_allowed(client_ip):
+        resp = jsonify({
+            "status": "error",
+            "message": f"Rate limit exceeded. Try again shortly.",
+        })
+        return resp, 429
+
+    link = request.args.get("url") or request.args.get("link") or ""
+    wait_for_transcoding = request.args.get("wait") in ("true", "1", "True")
+    
+    try:
+        file_index = int(request.args.get("index", 0))
+    except ValueError:
+        file_index = 0
+
+    if not link:
+        return jsonify({
+            "status": "error",
+            "message": "Missing required parameter 'url' or 'link'."
+        }), 400
+
+    try:
+        res = resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding)
+        if res.get("errno") != 0:
+            return jsonify({
+                "status": "error",
+                "message": res.get("error", "Unknown resolution error occurred.")
+            }), 400
+
+        files = res.get("files", [])
+        streamable_files = [f for f in files if f.get("stream_ready")]
+
+        if not streamable_files:
+            is_transcoding = any(f.get("error") == "transcoding_in_progress" for f in files)
+            if is_transcoding:
+                return jsonify({
+                    "status": "transcoding",
+                    "message": "HLS streaming manifest is currently transcoding. Please try again shortly."
+                }), 202
+            return jsonify({
+                "status": "error",
+                "message": "No streamable video files found in this share link."
+            }), 404
+
+        if file_index < 0 or file_index >= len(streamable_files):
+            file_index = 0
+
+        target_file = streamable_files[file_index]
+        raw_m3u8 = target_file.get("stream_m3u8", "")
+
+        if not raw_m3u8:
+            return jsonify({
+                "status": "error",
+                "message": "Stream manifest content is empty."
+            }), 500
+
+        # Rewrite segment URLs to use local proxy
+        proxied_lines = []
+        for line in raw_m3u8.splitlines():
+            line_stripped = line.strip()
+            if line_stripped and not line_stripped.startswith("#"):
+                quoted_url = urllib.parse.quote(line_stripped)
+                proxy_url = f"{request.scheme}://{request.host}/api/stream/segment?url={quoted_url}"
+                proxied_lines.append(proxy_url)
+            else:
+                proxied_lines.append(line)
+
+        proxied_m3u8 = "\n".join(proxied_lines)
+
+        response = Response(proxied_m3u8, content_type="application/vnd.apple.mpegurl")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Manifest proxy error: {str(e)}"
+        }), 500
+
+
+@app.route("/api/stream/segment", methods=["GET", "OPTIONS"])
+def stream_segment():
+    if request.method == "OPTIONS":
+        resp = Response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        return resp
+
+    url = request.args.get("url") or ""
+    if not url:
+        return "Missing segment URL", 400
+
+    target_url = urllib.parse.unquote(url)
+
+    # SSRF Protection
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        domain = parsed.netloc.lower()
+        allowed_suffixes = (
+            ".1024terabox.com",
+            ".baidu.com",
+            ".terabox.com",
+            ".teraboxapp.com",
+            "pcs.baidu.com",
+            "d.pcs.1024terabox.com"
+        )
+        is_allowed = any(domain == suffix or domain.endswith(suffix) for suffix in allowed_suffixes)
+        if not is_allowed:
+            return "Forbidden: Invalid stream host destination.", 403
+    except Exception:
+        return "Invalid segment URL format", 400
+
+    try:
+        headers = {}
+        range_header = request.headers.get("Range")
+        if range_header:
+            headers["Range"] = range_header
+
+        req = session.get(target_url, headers=headers, stream=True, timeout=30)
+        
+        resp_headers = {}
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+        }
+        
+        for key in ("Content-Length", "Content-Type", "Content-Range", "Accept-Ranges"):
+            if key in req.headers:
+                resp_headers[key] = req.headers[key]
+        
+        resp_headers.update(cors_headers)
+        
+        def generate():
+            try:
+                for chunk in req.iter_content(chunk_size=16384):
+                    if chunk:
+                        yield chunk
+            finally:
+                req.close()
+
+        return Response(generate(), status=req.status_code, headers=resp_headers)
+
+    except Exception as e:
+        return f"Segment proxy encountered an error: {str(e)}", 500
 
 
 # ─── Server Entry Point ─────────────────────────────────────────────

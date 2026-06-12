@@ -155,7 +155,26 @@ GET http://127.0.0.1:5000/api/resolve?url=https://terasharelink.com/s/1LBCiS-QC7
 | `X-RateLimit-Remaining` | Number of requests remaining in the current window |
 | `Retry-After` | Seconds to wait (only on 429 responses) |
 
+#### **GET /api/stream/manifest** (or `/api/stream/playlist.m3u8`) — HLS Stream Proxy
+
+Resolves and rewrites the HLS manifest playlist for media players. All media chunk URLs inside the manifest are rewritten to route through the local segment proxy, allowing you to stream videos directly in players like VLC, PotPlayer, or Safari without authentication or IP blocks.
+
+**Parameters:**
+- `url` (Required): The full Terabox share URL.
+- `index` (Optional): The file index inside the folder if multiple streamable files are present (default `0`).
+- `wait` (Optional): Set to `true` or `1` to block and wait/retry if transcoding is in progress.
+
+**Example VLC Stream URL:**
+```
+http://127.0.0.1:5000/api/stream/manifest?url=https://1024terabox.com/s/1uCJPUU_1xRe10pU_bzEd0Q
+```
+
+#### **GET /api/stream/segment** — Segment Proxy
+
+*Internal proxy route.* Streams segment binary files (`.ts` chunks) from Terabox CDNs using the active backend session headers and cookies. Features built-in SSRF protection limiting outbound requests to authorized Terabox and Baidu PCS domains.
+
 ---
+
 
 ## 3. Load Testing
 
