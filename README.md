@@ -78,7 +78,12 @@ The server auto-detects your platform:
 | `CACHE_TTL` | `60` | Cache time-to-live in seconds |
 | `CACHE_MAX_ENTRIES` | `256` | Maximum cached responses (LRU eviction) |
 | `RATE_LIMIT_RPM` | `30` | Max requests per minute per IP |
-| `API_KEY` | `None` | Optional API Key. Enforces authorization if configured. |
+| `API_KEY` | `None` | **Required in production.** Enforces authentication on all protected endpoints. |
+| `HMAC_SECRET` | `API_KEY` | Secret for signing shortened proxy URLs. Defaults to `API_KEY`. |
+| `REQUIRE_API_KEY` | `auto` | Set to `0`/`false` to allow open access (dev only). `auto` = require when `API_KEY` is set. |
+| `TRUSTED_PROXIES` | *(empty)* | Comma-separated list of proxy IPs/CIDRs. Only needed for non-loopback proxies. |
+| `RENDER` | *(unset)* | Set to `true` on Render.com to auto-trust Render's load balancer. |
+| `VERCEL` | *(auto)* | Set automatically by Vercel — no manual config needed. |
 
 ```bash
 # Example: custom configuration with API Key
@@ -231,6 +236,47 @@ Deploy the API globally to Vercel in seconds:
 3. Run: `vercel`
 
 > **Note:** On Vercel (serverless), the API uses Flask directly (Waitress is not used). Caching and rate limiting still function within a single invocation context but won't persist across cold starts.
+
+### Platform notes — Vercel
+- The `VERCEL` env var is injected automatically. Client IP resolution trusts
+  Vercel's `x-vercel-forwarded-for` header without any extra configuration.
+- Set `API_KEY` in the Vercel project settings (Settings → Environment Variables).
+- Cold starts clear the in-memory cache and rate limiter; this is expected
+  for serverless and does not affect correctness.
+
+---
+
+## 5. Render.com Deployment
+
+Deploy to Render as a **Web Service**:
+
+1. Push the repo to GitHub.
+2. In the Render dashboard, create a new **Web Service** and connect the repo.
+3. Render will auto-detect `requirements.txt`. Set the start command:
+   ```
+   python api/index.py
+   ```
+4. Add environment variables in the **Environment** tab:
+   | Variable | Value |
+   |---|---|
+   | `API_KEY` | Your secret key (required) |
+   | `RENDER` | `true` |
+
+> **Why set `RENDER=true`?** Render runs the app behind its own reverse proxy.
+> When `RENDER` is set, the API trusts the `X-Forwarded-For` header that Render's
+> load balancer injects, so the per-IP rate limiter correctly identifies each
+> client. Without it, all requests appear to come from the same proxy IP and the
+> rate limiter is effectively global.
+
+### Platform notes — Render.com
+- Loopback addresses (`127.0.0.0/8`, `::1`) are trusted automatically, so even
+  without `RENDER=true` the rate limiter will usually work when Render's proxy
+  is on the same host. Setting `RENDER=true` is the recommended way to make
+  this explicit and future-proof.
+- Render sets `PORT` automatically; the code reads it.
+- If you front Render with an additional CDN or external load balancer, add its
+  CIDR to `TRUSTED_PROXIES` and disable automatic loopback trust by setting
+  `TRUSTED_PROXIES` explicitly.
 
 ---
 

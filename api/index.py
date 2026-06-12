@@ -66,9 +66,21 @@ def _parse_trusted_cidrs(raw):
     return cidrs
 
 TRUSTED_PROXY_CIDRS = _parse_trusted_cidrs(TRUSTED_PROXY_CIDRS_RAW)
-# Vercel runs behind its own edge; the platform sets VERCEL=1 and forwards a
-# single client IP via x-vercel-forwarded-for. Trust that header in that case.
+
+# Platform auto-detection. Both Vercel and Render set their own env vars on
+# every service instance; when present we trust their respective proxy headers
+# without requiring TRUSTED_PROXIES to be configured.
 ON_VERCEL = bool(os.environ.get("VERCEL"))
+ON_RENDER = os.environ.get("RENDER", "").lower() in ("true", "1", "yes")
+
+# Loopback addresses are always trusted by default — they correspond to a local
+# reverse proxy (nginx, caddy, Render's sidecar, Docker port-mapping) running
+# on the same host.  This removes the need to manually configure
+# TRUSTED_PROXIES=127.0.0.1/32 in the most common container / PaaS setups.
+_LOOPBACK_CIDRS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+)
 
 def _peer_ip():
     """Return the immediate TCP peer as an ipaddress.IPv4Address / IPv6Address, or None."""
@@ -81,47 +93,68 @@ def _peer_ip():
     except ValueError:
         return None
 
-def _is_trusted_peer():
-    """True if the immediate TCP peer is in TRUSTED_PROXY_CIDRS (or we're on Vercel)."""
-    if ON_VERCEL:
+def _is_trusted_peer(peer=None):
+    """True if the immediate TCP peer is in a trusted proxy set.
+
+    Trusted means one of:
+      - Vercel edge  (VERCEL env detected)
+      - Render proxy  (RENDER env detected)
+      - Loopback address  (127.x.x.x or ::1) — local reverse proxy / sidecar
+      - Explicit TRUSTED_PROXY_CIDRS entry
+    """
+    if ON_VERCEL or ON_RENDER:
         return True
-    if not TRUSTED_PROXY_CIDRS:
-        return False
-    peer = _peer_ip()
+    if peer is None:
+        peer = _peer_ip()
     if peer is None:
         return False
-    return any(peer in cidr for cidr in TRUSTED_PROXY_CIDRS)
+    if any(peer in cidr for cidr in _LOOPBACK_CIDRS):
+        return True
+    if TRUSTED_PROXY_CIDRS and any(peer in cidr for cidr in TRUSTED_PROXY_CIDRS):
+        return True
+    return False
 
 def _client_ip():
     """
     Resolve the *real* client IP, taking reverse proxies into account.
 
-    - On Vercel: trust x-vercel-forwarded-for (single hop, set by the platform).
-    - Behind a configured trusted proxy: take the *rightmost* untrusted entry in
-      X-Forwarded-For (i.e. the value added by the closest trusted hop). Walking
-      right-to-left stops at the first IP that's NOT in the trusted set.
-    - Direct connection (no trusted proxy): return request.remote_addr unchanged.
-      In this mode X-Forwarded-For is ignored entirely so a client cannot spoof
-      their way around the per-IP rate limiter.
+    Priority order:
+      1. Vercel  →  x-vercel-forwarded-for (set by the edge, single hop).
+      2. Render / loopback proxy  →  leftmost X-Forwarded-For entry.  The
+         platform proxy (or local nginx/caddy) sanitizes the header, so the
+         first value is the real client.
+      3. Explicit TRUSTED_PROXY_CIDRS  →  walk the XFF chain right-to-left
+         and return the first IP that is *not* in the trusted set.
+      4. Direct connection  →  request.remote_addr.  XFF is ignored so a
+         client cannot spoof their way around the per-IP rate limiter.
     """
+    # ── Case 1: Vercel ──────────────────────────────────────────────
     if ON_VERCEL:
         v = request.headers.get("X-Vercel-Forwarded-For")
         if v:
             return v.split(",")[0].strip()
+        return request.remote_addr or "unknown"
 
     peer = _peer_ip()
     if peer is None:
         return request.remote_addr or "unknown"
 
-    if not _is_trusted_peer():
-        # Direct connection — never trust X-Forwarded-For from an untrusted source.
+    # ── Case 4: direct connection ───────────────────────────────────
+    if not _is_trusted_peer(peer):
         return str(peer)
 
     xff = request.headers.get("X-Forwarded-For", "")
     if not xff:
         return str(peer)
 
-    # Walk right-to-left. The hop just inside the trusted boundary is the client.
+    # ── Case 2: platform-managed proxy or loopback ──────────────────
+    # When the proxy is a platform sidecar / reverse-proxy on the same host
+    # (Render, Docker, local dev) or no explicit CIDRs were configured, the
+    # proxy already sanitized the XFF header. Take the leftmost entry.
+    if ON_RENDER or (not TRUSTED_PROXY_CIDRS and any(peer in c for c in _LOOPBACK_CIDRS)):
+        return xff.split(",")[0].strip()
+
+    # ── Case 3: explicit CIDR list — walk right-to-left ────────────
     chain = [h.strip() for h in xff.split(",") if h.strip()]
     candidate = str(peer)
     for hop in reversed(chain):
