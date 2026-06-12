@@ -196,7 +196,10 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
             "dlink": None,
             "stream_ready": False,
             "stream_m3u8": None,
-            "error": None
+            "error": None,
+            "thumbnails": item.get("thumbs"),
+            "path": item.get("path"),
+            "is_directory": bool(item.get("isdir"))
         }
 
         if action == "l":

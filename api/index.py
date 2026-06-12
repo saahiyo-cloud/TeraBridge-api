@@ -307,7 +307,10 @@ def resolve():
                 "transfer_status": f.get("transfer_status"),
                 "dlink": f.get("dlink"),
                 "stream_ready": f.get("stream_ready"),
-                "error": f.get("error")
+                "error": f.get("error"),
+                "thumbnails": f.get("thumbnails"),
+                "path": f.get("path"),
+                "is_directory": f.get("is_directory")
             }
             # Only include HLS stream content if it is successfully parsed
             if f.get("stream_ready"):
