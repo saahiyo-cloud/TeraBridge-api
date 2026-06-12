@@ -443,7 +443,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
                 file_res["error"] = "transcoding_in_progress"
         
         # --- ACTION DOWNLOAD (or fallback when stream not ready) ---
-        if action == "d" or (action == "s" and not file_res["stream_ready"]):
+        if True:
             # Direct link resolution via filemetas (which is robust and works without sign/timestamp)
             metas_url = f"{BASE_API}/api/filemetas?{qp()}&fsids=[\"{my_fs_id}\"]&dlink=1&thumb=0&bdstoken={BDSTOKEN}"
             try:
