@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie
 from api.redis_client import redis_client
+from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY
 
 app = Flask(__name__)
 
@@ -1172,15 +1173,31 @@ def download_file_route():
 # ─── Dynamic Config Sync ─────────────────────────────────────────────
 _last_config_check = 0
 CONFIG_CHECK_INTERVAL = 60 # seconds
+_current_active_account_id = None
 
 def load_config_from_redis():
-    """Load latest configuration/cookies from Upstash Redis and update downloader globals."""
+    """Load latest configuration/cookies from Upstash Redis managed account pool."""
+    global _current_active_account_id
     if not redis_client:
         return
     try:
-        # Fetch config hash from redis
-        creds = redis_client.hgetall("terabridge:config")
+        active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
+        creds = None
+        
+        if active_id:
+            raw_creds = redis_client.hget(ACCOUNTS_HASH_KEY, active_id)
+            if raw_creds:
+                try:
+                    creds = json.loads(raw_creds)
+                except Exception:
+                    pass
+                    
+        # If no active account is set or the current one is not healthy, rotate
+        if not creds or creds.get("status") != "healthy":
+            active_id, creds = get_next_healthy_account()
+            
         if creds:
+            _current_active_account_id = active_id
             from downloader import update_credentials
             update_credentials(
                 cookie=creds.get("cookie"),
@@ -1190,9 +1207,9 @@ def load_config_from_redis():
                 timestamp=creds.get("timestamp"),
                 logid=creds.get("logid")
             )
-            print("[TeraBridge] Successfully synchronized credentials from Upstash Redis", flush=True)
+            print(f"[TeraBridge] Successfully synchronized active pool account: {active_id}", flush=True)
     except Exception as e:
-        print(f"[TeraBridge][WARN] Failed to load config from Upstash Redis: {e}", flush=True)
+        print(f"[TeraBridge][WARN] Failed to load config from Upstash Redis pool: {e}", flush=True)
 
 @app.before_request
 def check_config_refresh():
@@ -1231,6 +1248,9 @@ def admin_config():
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         
+        # Get account_id from request or default to active account or account_1
+        account_id = data.get("account_id") or _current_active_account_id or "account_1"
+        
         valid_keys = {"cookie", "js_token", "bds_token", "sign", "timestamp", "logid"}
         updates = {k: v for k, v in data.items() if k in valid_keys and v is not None}
         
@@ -1241,38 +1261,49 @@ def admin_config():
             }), 400
 
         try:
-            redis_client.hset("terabridge:config", values=updates)
+            # Load existing account from Redis if it exists
+            existing_raw = redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
+            account_data = {}
+            if existing_raw:
+                try:
+                    account_data = json.loads(existing_raw)
+                except Exception:
+                    pass
             
-            # Immediately update memory state of current process
-            from downloader import update_credentials
-            update_credentials(
-                cookie=updates.get("cookie"),
-                js_token=updates.get("js_token"),
-                bds_token=updates.get("bds_token"),
-                sign=updates.get("sign"),
-                timestamp=updates.get("timestamp"),
-                logid=updates.get("logid")
-            )
+            # Merge updates and reset status to healthy
+            account_data.update(updates)
+            account_data["status"] = "healthy"
+            account_data["last_used"] = account_data.get("last_used") or int(time.time())
+            if "unhealthy_reason" in account_data:
+                del account_data["unhealthy_reason"]
+            if "unhealthy_at" in account_data:
+                del account_data["unhealthy_at"]
+
+            # Save back to Redis pool
+            redis_client.hset(ACCOUNTS_HASH_KEY, account_id, json.dumps(account_data))
             
-            # Reset stale check timer to delay next Redis fetch
-            global _last_config_check
-            _last_config_check = time.time()
-            
+            # Immediately update memory state if this is the active account
+            active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
+            if active_id == account_id or not active_id:
+                redis_client.set(ACTIVE_ACCOUNT_KEY, account_id)
+                load_config_from_redis()
+                
             return jsonify({
                 "status": "success",
-                "message": "Configuration updated successfully in Redis and applied locally.",
+                "message": f"Account '{account_id}' updated successfully in Redis pool.",
                 "updated_keys": list(updates.keys())
             })
         except Exception as e:
             return jsonify({
                 "status": "error",
-                "message": f"Failed to update config in Redis: {str(e)}"
+                "message": f"Failed to update config in Redis pool: {str(e)}"
             }), 500
 
     else:
-        # GET request: fetch from Redis and mask sensitive values
+        # GET request: fetch all accounts from pool and mask sensitive values
         try:
-            creds = redis_client.hgetall("terabridge:config") or {}
+            active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
+            raw_accounts = redis_client.hgetall(ACCOUNTS_HASH_KEY) or {}
             
             def mask_val(key, val):
                 if not val:
@@ -1285,15 +1316,24 @@ def admin_config():
                     return f"{val[:4]}...{val[-4:]}"
                 return "set"
 
-            masked = {k: mask_val(k, v) for k, v in creds.items()}
+            pool_summary = {}
+            for acc_id, raw_val in raw_accounts.items():
+                try:
+                    acc_data = json.loads(raw_val)
+                    masked = {k: mask_val(k, v) if k in ("cookie", "js_token", "bds_token", "sign", "timestamp", "logid") else v for k, v in acc_data.items()}
+                    pool_summary[acc_id] = masked
+                except Exception:
+                    pass
+
             return jsonify({
                 "status": "success",
-                "config": masked
+                "active_account_id": active_id,
+                "accounts_pool": pool_summary
             })
         except Exception as e:
             return jsonify({
                 "status": "error",
-                "message": f"Failed to read config from Redis: {str(e)}"
+                "message": f"Failed to read accounts from Redis pool: {str(e)}"
             }), 500
 
 
@@ -1347,22 +1387,28 @@ def cron_validate():
     if CRON_SECRET and client_secret != CRON_SECRET:
         return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing cron secret."}), 401
 
-    # Load active cookie from Redis or fall back to environment variable
+    # Load active cookie from Redis pool or fall back to environment variable
     active_cookie = None
-    from downloader import COOKIE
+    active_id = None
     if redis_client:
         try:
-            creds = redis_client.hgetall("terabridge:config") or {}
-            active_cookie = creds.get("cookie")
+            active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
+            if active_id:
+                raw_creds = redis_client.hget(ACCOUNTS_HASH_KEY, active_id)
+                if raw_creds:
+                    creds = json.loads(raw_creds)
+                    active_cookie = creds.get("cookie")
         except Exception as e:
             print(f"[TeraBridge][WARN] Failed to fetch cookie from Redis in cron: {e}", flush=True)
     
-    if not active_cookie:
+    if not active_id:
+        active_id = "default_env"
+        from downloader import COOKIE
         active_cookie = COOKIE
-
+ 
     if not active_cookie:
         return jsonify({"status": "error", "message": "No active cookie found to validate."}), 400
-
+ 
     # Call validate_session_cookie helper
     is_valid, msg = validate_session_cookie(active_cookie)
     
