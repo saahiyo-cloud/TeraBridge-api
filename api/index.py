@@ -10,6 +10,7 @@ from collections import OrderedDict
 from flask import Flask, request, jsonify, Response
 import urllib.parse
 import re
+import jwt
 
 # Load environment variables from .env file if present
 try:
@@ -424,32 +425,67 @@ def _periodic_cleanup():
 _cleanup_thread = threading.Thread(target=_periodic_cleanup, daemon=True)
 _cleanup_thread.start()
 
+# ─── Firebase ID Token Validation Helpers ────────────────────────────
+FIREBASE_PROJECT_ID = os.environ.get("VITE_FIREBASE_PROJECT_ID") or os.environ.get("FIREBASE_PROJECT_ID") or "teraplay-project"
+GOOGLE_KEYS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+_google_public_keys = {}
+_keys_expiry = 0
+
+def get_google_public_keys():
+    global _google_public_keys, _keys_expiry
+    now = time.time()
+    if not _google_public_keys or now > _keys_expiry:
+        try:
+            import requests
+            r = requests.get(GOOGLE_KEYS_URL, timeout=10)
+            if r.status_code == 200:
+                _google_public_keys = r.json()
+                cache_control = r.headers.get("Cache-Control", "")
+                max_age = 3600
+                match = re.search(r'max-age=(\d+)', cache_control)
+                if match:
+                    max_age = int(match.group(1))
+                _keys_expiry = now + max_age
+        except Exception as e:
+            print(f"[TeraBridge][ERROR] Failed to fetch Google public keys: {e}", flush=True)
+    return _google_public_keys
+
+def verify_firebase_token(token):
+    if not token:
+        return False
+    try:
+        public_keys = get_google_public_keys()
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+        public_key = public_keys.get(kid)
+        if not public_key:
+            print(f"[Auth][ERROR] Public key for kid '{kid}' not found.", flush=True)
+            return False
+            
+        decoded = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            audience=FIREBASE_PROJECT_ID,
+            issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"
+        )
+        request.user = decoded
+        return True
+    except Exception as e:
+        print(f"[Auth][ERROR] Firebase JWT verification failed: {e}", flush=True)
+        return False
+
 # ─── API Key Verification Helper ────────────────────────────────────
 def check_auth():
     """
-    Verify the request carries a valid API key.
+    Verify the request carries a valid API key or a valid Firebase JWT ID Token.
 
     Accepted transports (in priority order):
       1. X-API-Key header
-      2. Authorization: Bearer <key>
+      2. Authorization: Bearer <token> (Firebase JWT or static API Key)
       3. ?key=...  or  ?api_key=...  query parameter
       4. JSON body {"key": ...} or {"api_key": ...}
-
-    Behavior is controlled by REQUIRE_API_KEY:
-      - True  (or unset, when API_KEY is configured): every protected endpoint
-              must carry a valid key. No key configured at all also fails closed.
-      - False (or unset, when API_KEY is *not* configured): endpoints are open.
-              This is the legacy "auto" mode and is meant for local dev only.
-              A loud warning is logged at startup when it kicks in.
     """
-    # Fail-closed when API_KEY is not configured (unless explicitly disabled).
-    if not API_KEY:
-        if REQUIRE_API_KEY:
-            # Operator asked for strict auth but didn't set a key: reject.
-            return False
-        # Auto/disabled mode with no key: open access (dev only).
-        return True
-
     # 1. Custom header
     client_key = request.headers.get("X-API-Key")
 
@@ -457,9 +493,15 @@ def check_auth():
     if not client_key:
         auth_header = request.headers.get("Authorization") or ""
         if auth_header.startswith("Bearer "):
-            client_key = auth_header[len("Bearer "):].strip()
+            bearer_token = auth_header[len("Bearer "):].strip()
+            # If the token contains dots, check if it's a valid Firebase JWT
+            if bearer_token.count(".") == 2:
+                if verify_firebase_token(bearer_token):
+                    return True
+            else:
+                client_key = bearer_token
 
-    # 3. Query parameter (fallback for media players / browser <video> tags)
+    # 3. Query parameter
     if not client_key:
         client_key = request.args.get("key") or request.args.get("api_key")
 
@@ -471,10 +513,19 @@ def check_auth():
             pass
 
     if not client_key:
+        # Fall-closed when API_KEY is not configured (unless explicitly disabled).
+        if not API_KEY:
+            if REQUIRE_API_KEY:
+                return False
+            return True
         return False
 
-    # Constant-time comparison; both values must be the same length for a hit.
-    return hmac.compare_digest(client_key, API_KEY)
+    # Check against static API key
+    if API_KEY and hmac.compare_digest(client_key, API_KEY):
+        return True
+
+    return False
+
 
 
 # ─── HMAC Signature Helpers for URL Security ──────────────────────────
@@ -595,6 +646,12 @@ def _format_resolved_response(res, link):
         else:
             proxy_dlink = dlink_url
 
+        if f.get("stream_ready") and original_fs_id and surl:
+            manifest_sig = generate_signature(surl, original_fs_id, "manifest")
+            proxy_stream = f"{_request_base_url()}/api/stream/manifest?surl={surl}&fs_id={original_fs_id}&sig={manifest_sig}"
+        else:
+            proxy_stream = None
+
         file_info = {
             "filename": f.get("filename"),
             "size_bytes": f.get("size_bytes"),
@@ -602,6 +659,7 @@ def _format_resolved_response(res, link):
             "fs_id": f.get("fs_id"),
             "transfer_status": f.get("transfer_status"),
             "dlink": proxy_dlink,
+            "stream_url": proxy_stream,
             "stream_ready": f.get("stream_ready"),
             "error": f.get("error"),
             "thumbnails": proxied_thumbs if proxied_thumbs else None,
@@ -868,8 +926,14 @@ def stream_manifest():
         resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         return resp
 
-    if not check_auth():
-        return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing API key."}), 401
+    surl = request.args.get("surl") or ""
+    fs_id = request.args.get("fs_id") or ""
+    sig = request.args.get("sig") or ""
+
+    # Authorize either via master key/Firebase token OR via valid signature
+    is_authorized = check_auth() or (surl and fs_id and verify_signature(surl, fs_id, "manifest", sig))
+    if not is_authorized:
+        return jsonify({"status": "error", "message": "Unauthorized: Invalid signature or authentication."}), 401
 
     # ── Rate Limiting ──
     client_ip = _client_ip()
@@ -882,6 +946,9 @@ def stream_manifest():
         return resp, 429
 
     link = request.args.get("url") or request.args.get("link") or ""
+    if not link and surl:
+        link = f"https://1024terabox.com/s/{surl}"
+
     wait_for_transcoding = request.args.get("wait") in ("true", "1", "True")
     
     try:
@@ -892,7 +959,7 @@ def stream_manifest():
     if not link:
         return jsonify({
             "status": "error",
-            "message": "Missing required parameter 'url' or 'link'."
+            "message": "Missing required parameter 'url', 'link' or 'surl'."
         }), 400
 
     try:
@@ -917,6 +984,21 @@ def stream_manifest():
                 "status": "error",
                 "message": "No streamable video files found in this share link."
             }), 404
+
+        if fs_id:
+            # Map fs_id to the exact streamable file
+            matching_idx = -1
+            for idx, f in enumerate(streamable_files):
+                if str(f.get("original_fs_id")) == str(fs_id) or str(f.get("fs_id")) == str(fs_id):
+                    matching_idx = idx
+                    break
+            if matching_idx != -1:
+                file_index = matching_idx
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": "Requested file not found in share link."
+                }), 404
 
         if file_index < 0 or file_index >= len(streamable_files):
             file_index = 0
