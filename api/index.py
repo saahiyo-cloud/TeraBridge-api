@@ -471,9 +471,14 @@ def verify_firebase_token(token):
                 _recent_auth_errors.pop(0)
             return False
             
+        # Parse the public key from the X.509 certificate string
+        from cryptography.x509 import load_pem_x509_certificate
+        cert_obj = load_pem_x509_certificate(public_key.encode())
+        public_key_obj = cert_obj.public_key()
+        
         decoded = jwt.decode(
             token,
-            public_key,
+            public_key_obj,
             algorithms=["RS256"],
             audience=FIREBASE_PROJECT_ID,
             issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"
