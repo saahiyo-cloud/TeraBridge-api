@@ -546,6 +546,13 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
         "files": results
     }
 
+    return {
+        "errno": 0,
+        "title": title,
+        "share_id": share_id,
+        "uk": uk,
+        "files": results
+    }
 
 def download_file(dlink, filename):
     print("✅ Direct download link retrieved successfully!")
