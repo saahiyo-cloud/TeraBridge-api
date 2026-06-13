@@ -1087,6 +1087,7 @@ def stream_segment():
             ".terabox.fun",
             ".terasharefile.com",
             ".teraboxlink.com",
+            ".teraboxshare.com",
 
             # HLS Videotran CDN variants
             ".1024terabox.com-videotran-hybcloud",
@@ -1098,6 +1099,7 @@ def stream_segment():
             ".momerybox.com-videotran-hybcloud",
             ".mirrobox.com-videotran-hybcloud",
             ".gibibox.com-videotran-hybcloud",
+            ".teraboxshare.com-videotran-hybcloud",
             ".tibibox.com-videotran-hybcloud",
             ".4funbox.com-videotran-hybcloud",
             ".1024tera.com-videotran-hybcloud",
@@ -1253,6 +1255,7 @@ def stream_thumbnail():
             ".terabox.fun",
             ".terasharefile.com",
             ".teraboxlink.com",
+            ".teraboxshare.com",
 
             # Other CDN and storage servers
             "pcs.baidu.com",
