@@ -430,6 +430,7 @@ FIREBASE_PROJECT_ID = os.environ.get("VITE_FIREBASE_PROJECT_ID") or os.environ.g
 GOOGLE_KEYS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
 _google_public_keys = {}
 _keys_expiry = 0
+_recent_auth_errors = []
 
 def get_google_public_keys():
     global _google_public_keys, _keys_expiry
@@ -451,6 +452,7 @@ def get_google_public_keys():
     return _google_public_keys
 
 def verify_firebase_token(token):
+    global _recent_auth_errors
     if not token:
         return False
     try:
@@ -459,7 +461,14 @@ def verify_firebase_token(token):
         kid = unverified_header.get("kid")
         public_key = public_keys.get(kid)
         if not public_key:
-            print(f"[Auth][ERROR] Public key for kid '{kid}' not found.", flush=True)
+            err_msg = f"Public key for kid '{kid}' not found."
+            print(f"[Auth][ERROR] {err_msg}", flush=True)
+            _recent_auth_errors.append({
+                "timestamp": time.time(),
+                "error": err_msg
+            })
+            if len(_recent_auth_errors) > 10:
+                _recent_auth_errors.pop(0)
             return False
             
         decoded = jwt.decode(
@@ -472,7 +481,16 @@ def verify_firebase_token(token):
         request.user = decoded
         return True
     except Exception as e:
-        print(f"[Auth][ERROR] Firebase JWT verification failed: {e}", flush=True)
+        import traceback
+        err_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"[Auth][ERROR] Firebase JWT verification failed: {err_msg}", flush=True)
+        _recent_auth_errors.append({
+            "timestamp": time.time(),
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        if len(_recent_auth_errors) > 10:
+            _recent_auth_errors.pop(0)
         return False
 
 # ─── API Key Verification Helper ────────────────────────────────────
@@ -605,6 +623,8 @@ def stats():
         "session_health": session_health,
         "cache": cache.stats(),
         "rate_limiter": rate_limiter.stats(),
+        "firebase_project_id": FIREBASE_PROJECT_ID,
+        "recent_auth_errors": _recent_auth_errors
     })
 
 # ─── Helper: Format resolve_link outputs to API proxy format ──────────
