@@ -554,6 +554,184 @@ def stats():
         "rate_limiter": rate_limiter.stats(),
     })
 
+# ─── Helper: Format resolve_link outputs to API proxy format ──────────
+def _format_resolved_response(res, link):
+    """Format resolve_link dictionary to the API's proxy-rewritten output dictionary."""
+    is_transcoding = any(f.get("error") == "transcoding_in_progress" for f in res.get("files", []))
+    
+    response_data = {
+        "status": "transcoding" if is_transcoding else "success",
+        "title": res.get("title"),
+        "share_id": res.get("share_id"),
+        "uk": res.get("uk"),
+        "files": []
+    }
+
+    surl = parse_surl(link)
+    for f in res.get("files", []):
+        original_fs_id = f.get("original_fs_id")
+        raw_thumbs = f.get("thumbnails")
+        proxied_thumbs = {}
+        if raw_thumbs and isinstance(raw_thumbs, dict):
+            for k, v in raw_thumbs.items():
+                if v:
+                    if original_fs_id and surl:
+                        sig = generate_signature(surl, original_fs_id, k)
+                        proxy_url = f"{_request_base_url()}/api/thumbnail?surl={surl}&fs_id={original_fs_id}&size_type={k}&sig={sig}"
+                    else:
+                        quoted_v = urllib.parse.quote(v)
+                        proxy_url = f"{_request_base_url()}/api/thumbnail?url={quoted_v}"
+                        if API_KEY:
+                            proxy_url += f"&key={API_KEY}"
+                    proxied_thumbs[k] = proxy_url
+
+        # Shortened download proxy link
+        dlink_url = f.get("dlink")
+        if dlink_url and original_fs_id and surl:
+            sig = generate_signature(surl, original_fs_id, "")
+            proxy_dlink = f"{_request_base_url()}/api/download?surl={surl}&fs_id={original_fs_id}&sig={sig}"
+        else:
+            proxy_dlink = dlink_url
+
+        file_info = {
+            "filename": f.get("filename"),
+            "size_bytes": f.get("size_bytes"),
+            "size_mb": f.get("size_mb"),
+            "fs_id": f.get("fs_id"),
+            "transfer_status": f.get("transfer_status"),
+            "dlink": proxy_dlink,
+            "stream_ready": f.get("stream_ready"),
+            "error": f.get("error"),
+            "thumbnails": proxied_thumbs if proxied_thumbs else None,
+            "path": f.get("path"),
+            "is_directory": f.get("is_directory")
+        }
+        # Only include HLS stream content if it is successfully parsed
+        if f.get("stream_ready"):
+            file_info["stream_m3u8"] = f.get("stream_m3u8")
+        response_data["files"].append(file_info)
+        
+    return response_data, is_transcoding
+
+
+# ─── Single Flight (Request Collapsing) locks ────────────────────────
+_single_flight_events = {}
+_single_flight_lock = threading.Lock()
+
+def acquire_resolve_lock(key):
+    """
+    Tries to acquire a resolution lock for the given cache key.
+    Returns True if acquired (caller must resolve and release), False otherwise (caller should wait).
+    """
+    if redis_client:
+        try:
+            # Set lock with 30 second expiration
+            is_locked = redis_client.set(f"lock:resolve:{key}", "locked", nx=True, ex=30)
+            return bool(is_locked)
+        except Exception as e:
+            print(f"[SingleFlight][WARN] Redis lock set error: {e}", flush=True)
+            
+    with _single_flight_lock:
+        if key in _single_flight_events:
+            return False
+        _single_flight_events[key] = threading.Event()
+        return True
+
+def release_resolve_lock(key):
+    """Releases the resolution lock for the given cache key."""
+    if redis_client:
+        try:
+            redis_client.delete(f"lock:resolve:{key}")
+        except Exception as e:
+            print(f"[SingleFlight][WARN] Redis lock delete error: {e}", flush=True)
+            
+    with _single_flight_lock:
+        if key in _single_flight_events:
+            event = _single_flight_events.pop(key)
+            event.set()
+
+def wait_for_resolution(key, check_cache_func, timeout=30):
+    """Waits for another thread/process to complete resolution, checking the cache periodically."""
+    start = time.time()
+    
+    if redis_client:
+        while time.time() - start < timeout:
+            cached = check_cache_func()
+            if cached is not None:
+                return cached
+            # If lock is gone and cache is still empty, break to resolve ourselves
+            if not redis_client.exists(f"lock:resolve:{key}"):
+                break
+            time.sleep(1.0)
+        return check_cache_func()
+
+    # In-memory event fallback
+    event = None
+    with _single_flight_lock:
+        event = _single_flight_events.get(key)
+        
+    if event:
+        event.wait(timeout=timeout)
+        
+    return check_cache_func()
+
+
+# ─── Background Transcoder Polling Worker ────────────────────────────
+_transcode_jobs_lock = threading.Lock()
+_active_transcode_jobs = set()
+
+def _background_transcode_poll(link, action, cache_key):
+    """Background polling worker for HLS video transcoding."""
+    lock_key = f"lock:transcode:{cache_key}"
+    
+    # Distributed lock check
+    if redis_client:
+        try:
+            if not redis_client.set(lock_key, "running", nx=True, ex=300): # 5 min limit
+                return # Already running
+        except Exception:
+            pass
+    else:
+        with _transcode_jobs_lock:
+            if cache_key in _active_transcode_jobs:
+                return
+            _active_transcode_jobs.add(cache_key)
+
+    print(f"[TranscoderWorker] Starting background transcoding checks for: {link}", flush=True)
+    try:
+        # Calls downloader.resolve_link with wait_for_transcoding=True,
+        # which polls up to 12 times (120s total)
+        res = resolve_link(link, action=action, wait_for_transcoding=True)
+        if res.get("errno") == 0:
+            # Check if transcoding is complete
+            response_data, is_transcoding = _format_resolved_response(res, link)
+            
+            if not is_transcoding:
+                # Update both wait=True and wait=False caches
+                cache.put(link, action, False, response_data)
+                cache.put(link, action, True, response_data)
+                
+                # Send Webhook Alert
+                video_title = res.get("title", "Unknown Video")
+                alert_msg = f"🎉 **HLS Transcoding Complete!**\nVideo **{video_title}** has finished transcoding and is ready for streaming."
+                send_webhook_alert(alert_msg)
+                print(f"[TranscoderWorker] Success: transcoding complete for: {link}", flush=True)
+                return
+                
+        print(f"[TranscoderWorker] Finished polling, but transcoding is still incomplete for: {link}", flush=True)
+    except Exception as e:
+        print(f"[TranscoderWorker][ERROR] Exception during background transcode: {e}", flush=True)
+    finally:
+        if redis_client:
+            try:
+                redis_client.delete(lock_key)
+            except Exception:
+                pass
+        else:
+            with _transcode_jobs_lock:
+                _active_transcode_jobs.discard(cache_key)
+
+
 @app.route("/api/resolve", methods=["GET", "POST"])
 def resolve():
     if not check_auth():
@@ -615,6 +793,24 @@ def resolve():
         resp.headers["X-RateLimit-Remaining"] = str(rate_limiter.remaining(client_ip))
         return resp
 
+    # ── Single Flight / Request Collapsing Lock ──
+    cache_key = cache._make_key(link, action, wait_for_transcoding)
+    has_lock = acquire_resolve_lock(cache_key)
+    
+    if not has_lock:
+        # Wait for concurrent resolution to finish and populate cache
+        print(f"[SingleFlight] Waiting for concurrent resolution of: {link}", flush=True)
+        cached = wait_for_resolution(cache_key, lambda: cache.get(link, action, wait_for_transcoding), timeout=30)
+        if cached is not None:
+            resp = jsonify(cached)
+            resp.headers["X-Cache"] = "HIT (COLLAPSED)"
+            resp.headers["X-RateLimit-Remaining"] = str(rate_limiter.remaining(client_ip))
+            return resp
+        # If wait timeout or failed, fall through to resolve ourselves
+        print(f"[SingleFlight] Wait timed out, proceeding to resolve ourselves: {link}", flush=True)
+        # Re-attempt lock acquisition just in case
+        acquire_resolve_lock(cache_key)
+
     # ── Call resolve_link ──
     try:
         res = resolve_link(link, action=action, wait_for_transcoding=wait_for_transcoding)
@@ -624,62 +820,13 @@ def resolve():
                 "message": res.get("error", "Unknown resolution error occurred.")
             }), 400
 
-        # Check if any video has transcoding in progress
-        is_transcoding = any(f.get("error") == "transcoding_in_progress" for f in res.get("files", []))
+        # Formulate proxy-ready response payload and detect transcoding status
+        response_data, is_transcoding = _format_resolved_response(res, link)
 
-        response_data = {
-            "status": "transcoding" if is_transcoding else "success",
-            "title": res.get("title"),
-            "share_id": res.get("share_id"),
-            "uk": res.get("uk"),
-            "files": []
-        }
-
-        surl = parse_surl(link)
-        print(f"[DEBUG] link={link} parsed surl={surl}", flush=True)
-        for f in res.get("files", []):
-            original_fs_id = f.get("original_fs_id")
-            print(f"[DEBUG] file={f.get('filename')} original_fs_id={original_fs_id} fs_id={f.get('fs_id')}", flush=True)
-            raw_thumbs = f.get("thumbnails")
-            proxied_thumbs = {}
-            if raw_thumbs and isinstance(raw_thumbs, dict):
-                for k, v in raw_thumbs.items():
-                    if v:
-                        if original_fs_id and surl:
-                            sig = generate_signature(surl, original_fs_id, k)
-                            proxy_url = f"{_request_base_url()}/api/thumbnail?surl={surl}&fs_id={original_fs_id}&size_type={k}&sig={sig}"
-                        else:
-                            quoted_v = urllib.parse.quote(v)
-                            proxy_url = f"{_request_base_url()}/api/thumbnail?url={quoted_v}"
-                            if API_KEY:
-                                proxy_url += f"&key={API_KEY}"
-                        proxied_thumbs[k] = proxy_url
-
-            # Shortened download proxy link
-            dlink_url = f.get("dlink")
-            if dlink_url and original_fs_id and surl:
-                sig = generate_signature(surl, original_fs_id, "")
-                proxy_dlink = f"{_request_base_url()}/api/download?surl={surl}&fs_id={original_fs_id}&sig={sig}"
-            else:
-                proxy_dlink = dlink_url
-
-            file_info = {
-                "filename": f.get("filename"),
-                "size_bytes": f.get("size_bytes"),
-                "size_mb": f.get("size_mb"),
-                "fs_id": f.get("fs_id"),
-                "transfer_status": f.get("transfer_status"),
-                "dlink": proxy_dlink,
-                "stream_ready": f.get("stream_ready"),
-                "error": f.get("error"),
-                "thumbnails": proxied_thumbs if proxied_thumbs else None,
-                "path": f.get("path"),
-                "is_directory": f.get("is_directory")
-            }
-            # Only include HLS stream content if it is successfully parsed
-            if f.get("stream_ready"):
-                file_info["stream_m3u8"] = f.get("stream_m3u8")
-            response_data["files"].append(file_info)
+        # Trigger background transcoding check if transcoding is detected & wait_for_transcoding is false
+        if is_transcoding and not wait_for_transcoding:
+            import threading
+            threading.Thread(target=_background_transcode_poll, args=(link, action, cache_key), daemon=True).start()
 
         # ── Store in Cache (don't cache transcoding-in-progress responses) ──
         if not is_transcoding:
@@ -702,6 +849,9 @@ def resolve():
             "status": "error",
             "message": f"Server encountered exception: {str(e)}"
         }), 500
+    finally:
+        # Always release Single Flight lock
+        release_resolve_lock(cache_key)
 
 
 # ─── HLS Streaming Proxy routes ─────────────────────────────────────
