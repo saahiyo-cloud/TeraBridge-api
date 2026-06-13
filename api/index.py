@@ -57,6 +57,8 @@ REQUIRE_API_KEY   = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0
 TRUSTED_PROXY_CIDRS_RAW = os.environ.get("TRUSTED_PROXIES", "").strip()
 CRON_SECRET             = os.environ.get("CRON_SECRET")
 NOTIFICATION_WEBHOOK_URL = os.environ.get("NOTIFICATION_WEBHOOK_URL")
+REDIRECT_SEGMENTS = os.environ.get("REDIRECT_SEGMENTS", "True").lower() in ("true", "1")
+
 
 def _parse_trusted_cidrs(raw):
     """Parse a comma-separated CIDR list. Empty entries are ignored."""
@@ -1039,6 +1041,10 @@ def stream_segment():
             return "Forbidden: Invalid stream host destination.", 403
     except Exception:
         return "Invalid segment URL format", 400
+
+    if REDIRECT_SEGMENTS:
+        return Response("", status=307, headers={"Location": target_url})
+
     try:
         headers = {
             "User-Agent": UA,

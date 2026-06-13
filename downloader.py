@@ -6,6 +6,7 @@ import re
 import os
 import zipfile
 import time
+import concurrent.futures
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -222,6 +223,197 @@ def show(label, r):
         print(f"  {r.text[:400]}")
         return {}
 
+def _process_single_file_metadata(item, share_id, uk, existing_files, action, wait_for_transcoding, bdstoken_val):
+    """
+    Processes a single file from the shared link (transfer + streaming checks).
+    This function is run in a ThreadPoolExecutor.
+    """
+    filename = item.get("server_filename")
+    fs_id = item.get("fs_id")
+    size_bytes = int(item.get("size", 0))
+    size_mb = size_bytes / 1024 / 1024
+    
+    file_res = {
+        "filename": filename,
+        "size_bytes": size_bytes,
+        "size_mb": round(size_mb, 2),
+        "original_fs_id": fs_id,
+        "fs_id": fs_id if action == "l" else None,
+        "transfer_status": "not_transferred" if action == "l" else "skipped_existing",
+        "dlink": None,
+        "stream_ready": False,
+        "stream_m3u8": None,
+        "error": None,
+        "thumbnails": item.get("thumbs"),
+        "path": item.get("path"),
+        "is_directory": str(item.get("isdir")) == "1"
+    }
+
+    if file_res["is_directory"]:
+        file_res["error"] = "File is a directory"
+        return file_res
+
+    if action == "l":
+        return file_res
+
+    # Check if the file already exists with same name and size
+    my_fs_id = ""
+    my_file_path = ""
+    if filename in existing_files and existing_files[filename]["size"] == size_bytes:
+        my_fs_id = existing_files[filename]["fs_id"]
+        my_file_path = existing_files[filename]["path"]
+        # File exists, skip transfer step
+    else:
+        # Step A: Transfer
+        transfer_payload = {
+            "fsidlist":  f"[{fs_id}]",
+            "path":      ROOT_PATH,
+            "shareid":   str(share_id),
+            "from":      str(uk),
+            "ondup":     "newcopy",
+            "bdstoken":  bdstoken_val,
+        }
+        try:
+            tr = session.post(
+                f"{BASE_API}/share/transfer?{qp()}&bdstoken={bdstoken_val}",
+                data=transfer_payload
+            )
+            transfer_res = tr.json()
+        except Exception as e:
+            file_res["error"] = f"Transfer API request failed: {e}"
+            file_res["transfer_status"] = "failed"
+            return file_res
+
+        if transfer_res.get("errno") not in (0, 4):
+            file_res["error"] = f"Transfer failed with Terabox errno {transfer_res.get('errno')}"
+            file_res["transfer_status"] = "failed"
+            return file_res
+
+        file_res["transfer_status"] = "success"
+
+        # Step B: Resolve my fs_id
+        try:
+            extra_list = transfer_res.get("extra", {}).get("list", [])
+            if extra_list:
+                my_fs_id = str(extra_list[0].get("to_fs_id", ""))
+                dest_path = extra_list[0].get("to", "")
+                if my_fs_id:
+                    if dest_path:
+                        filename = dest_path.split("/")[-1]
+                        my_file_path = dest_path
+        except Exception:
+            pass
+
+        if not my_fs_id:
+            # Fallback search
+            encoded_dir = urllib.parse.quote(ROOT_PATH)
+            try:
+                r_list = session.get(
+                    f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=20&bdstoken={bdstoken_val}"
+                )
+                list_res = r_list.json()
+                for entry in list_res.get("list", []):
+                    entry_name = entry.get("server_filename", "")
+                    if filename in entry_name or entry_name in filename:
+                        my_fs_id = str(entry.get("fs_id", ""))
+                        filename = entry_name
+                        my_file_path = entry.get("path", "")
+                        break
+            except Exception:
+                pass
+
+    if not my_fs_id:
+        file_res["error"] = "Could not resolve transferred file ID in account."
+        return file_res
+
+    file_res["fs_id"] = my_fs_id
+    file_res["filename"] = filename
+    
+    # --- ACTION HLS STREAMING ---
+    if action == "s":
+        if not my_file_path:
+            my_file_path = ROOT_PATH.rstrip("/") + "/" + filename
+        encoded_path = urllib.parse.quote(my_file_path)
+        
+        # Try multiple stream quality types — highest first
+        stream_types = ["M3U8_AUTO_720", "M3U8_AUTO_480", "M3U8_AUTO_360"]
+        
+        def _try_stream(stype):
+            """Try a single streaming request. Returns (success, errno, response_text)."""
+            url = f"{BASE_API}/api/streaming?{qp()}&path={encoded_path}&type={stype}&bdstoken={bdstoken_val}"
+            try:
+                sr = session.get(url, timeout=20)
+                if sr.status_code == 200 and "#EXTM3U" in sr.text:
+                    return True, 0, sr.text
+                err_code = None
+                try:
+                    res_json = sr.json()
+                    err_code = res_json.get("errno")
+                except Exception:
+                    pass
+                return False, err_code, sr.text[:200]
+            except Exception as e:
+                return False, -1, str(e)
+        
+        # PASS 1: Quick scan — try each resolution once to find any that's ready
+        best_m3u8 = None
+        all_transcoding = True
+        fatal_error = None
+        
+        for stype in stream_types:
+            ok, errno, text = _try_stream(stype)
+            if ok:
+                best_m3u8 = (stype, text)
+                all_transcoding = False
+                break
+            elif errno == 130:
+                # Transcoding in progress — try next (lower) resolution
+                continue
+            elif errno in (31066,):
+                # File format not supported for streaming at all
+                fatal_error = f"File format not supported for streaming (errno {errno})"
+                all_transcoding = False
+                break
+            elif errno in (31341, 31023):
+                fatal_error = f"File path error or not found (errno {errno})"
+                all_transcoding = False
+                break
+            else:
+                # Unknown error on this type, try next
+                all_transcoding = False
+                file_res["error"] = f"Streaming API errno {errno}: {text}"
+                continue
+        
+        if best_m3u8:
+            file_res["stream_ready"] = True
+            file_res["stream_m3u8"] = best_m3u8[1]
+            file_res["error"] = None
+        elif fatal_error:
+            file_res["error"] = fatal_error
+        elif all_transcoding and wait_for_transcoding:
+            # PASS 2: All resolutions are still transcoding — wait and retry
+            max_retries = 12
+            retry_delay = 10
+            print(f"  ⏳ All resolutions still transcoding, waiting (up to {max_retries * retry_delay}s)...")
+            for attempt in range(1, max_retries + 1):
+                time.sleep(retry_delay)
+                # Retry all types each round (highest first)
+                for stype in stream_types:
+                    ok, errno, text = _try_stream(stype)
+                    if ok:
+                        file_res["stream_ready"] = True
+                        file_res["stream_m3u8"] = text
+                        file_res["error"] = None
+                        break
+                if file_res["stream_ready"]:
+                    break
+            if not file_res["stream_ready"]:
+                file_res["error"] = "transcoding_in_progress"
+        elif all_transcoding:
+            file_res["error"] = "transcoding_in_progress"
+
+    return file_res
+
 def resolve_link(link, action="d", wait_for_transcoding=False):
     """
     Exposes the core resolution logic.
@@ -291,218 +483,60 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
         except Exception:
             pass
 
-    results = []
-    
-    for item in files_list:
-        filename = item.get("server_filename")
-        fs_id = item.get("fs_id")
-        size_bytes = int(item.get("size", 0))
-        size_mb = size_bytes / 1024 / 1024
+    # Run the file metadata/transfer checks in parallel using ThreadPoolExecutor
+    max_workers = min(10, len(files_list)) if files_list else 1
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures_list = [
+            executor.submit(
+                _process_single_file_metadata,
+                item,
+                share_id,
+                uk,
+                existing_files,
+                action,
+                wait_for_transcoding,
+                BDSTOKEN
+            ) for item in files_list
+        ]
+        results = [f.result() for f in futures_list]
+
+    # Batch resolve direct download links (dlink) via filemetas
+    # We only query filemetas for successful files (valid fs_id, no error) and when action is not list-only
+    if action != "l":
+        fs_ids_to_resolve = [r["fs_id"] for r in results if r.get("fs_id") and not r.get("error")]
         
-        file_res = {
-            "filename": filename,
-            "size_bytes": size_bytes,
-            "size_mb": round(size_mb, 2),
-            "original_fs_id": fs_id,
-            "fs_id": fs_id if action == "l" else None,
-            "transfer_status": "not_transferred" if action == "l" else "skipped_existing",
-            "dlink": None,
-            "stream_ready": False,
-            "stream_m3u8": None,
-            "error": None,
-            "thumbnails": item.get("thumbs"),
-            "path": item.get("path"),
-            "is_directory": str(item.get("isdir")) == "1"
-        }
-
-        if file_res["is_directory"]:
-            file_res["error"] = "File is a directory"
-            results.append(file_res)
-            continue
-
-        if action == "l":
-            results.append(file_res)
-            continue
-
-        # Check if the file already exists with same name and size
-        my_fs_id = ""
-        my_file_path = ""
-        if filename in existing_files and existing_files[filename]["size"] == size_bytes:
-            my_fs_id = existing_files[filename]["fs_id"]
-            my_file_path = existing_files[filename]["path"]
-            # File exists, skip transfer step
-        else:
-            # Step A: Transfer
-            transfer_payload = {
-                "fsidlist":  f"[{fs_id}]",
-                "path":      ROOT_PATH,
-                "shareid":   str(share_id),
-                "from":      str(uk),
-                "ondup":     "newcopy",
-                "bdstoken":  BDSTOKEN,
-            }
-            try:
-                tr = session.post(
-                    f"{BASE_API}/share/transfer?{qp()}&bdstoken={BDSTOKEN}",
-                    data=transfer_payload
-                )
-                transfer_res = tr.json()
-            except Exception as e:
-                file_res["error"] = f"Transfer API request failed: {e}"
-                file_res["transfer_status"] = "failed"
-                results.append(file_res)
-                continue
-
-            if transfer_res.get("errno") not in (0, 4):
-                file_res["error"] = f"Transfer failed with Terabox errno {transfer_res.get('errno')}"
-                file_res["transfer_status"] = "failed"
-                results.append(file_res)
-                continue
-
-            file_res["transfer_status"] = "success"
-
-            # Step B: Resolve my fs_id
-            try:
-                extra_list = transfer_res.get("extra", {}).get("list", [])
-                if extra_list:
-                    my_fs_id = str(extra_list[0].get("to_fs_id", ""))
-                    dest_path = extra_list[0].get("to", "")
-                    if my_fs_id:
-                        if dest_path:
-                            filename = dest_path.split("/")[-1]
-                            my_file_path = dest_path
-            except Exception:
-                pass
-
-            if not my_fs_id:
-                # Fallback search
-                try:
-                    r_list = session.get(
-                        f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=20&bdstoken={BDSTOKEN}"
-                    )
-                    list_res = r_list.json()
-                    for entry in list_res.get("list", []):
-                        entry_name = entry.get("server_filename", "")
-                        if filename in entry_name or entry_name in filename:
-                            my_fs_id = str(entry.get("fs_id", ""))
-                            filename = entry_name
-                            my_file_path = entry.get("path", "")
-                            break
-                except Exception:
-                    pass
-
-        if not my_fs_id:
-            file_res["error"] = "Could not resolve transferred file ID in account."
-            results.append(file_res)
-            continue
-
-        file_res["fs_id"] = my_fs_id
-        file_res["filename"] = filename
-        
-        # --- ACTION HLS STREAMING ---
-        if action == "s":
-            if not my_file_path:
-                my_file_path = ROOT_PATH.rstrip("/") + "/" + filename
-            encoded_path = urllib.parse.quote(my_file_path)
+        if fs_ids_to_resolve:
+            # We chunk the fs_ids list in groups of 100 as Terabox filemetas API might have limits
+            chunk_size = 100
+            fs_id_chunks = [fs_ids_to_resolve[i:i + chunk_size] for i in range(0, len(fs_ids_to_resolve), chunk_size)]
             
-            # Try multiple stream quality types — highest first
-            stream_types = ["M3U8_AUTO_720", "M3U8_AUTO_480", "M3U8_AUTO_360"]
-            
-            def _try_stream(stype):
-                """Try a single streaming request. Returns (success, errno, response_text)."""
-                url = f"{BASE_API}/api/streaming?{qp()}&path={encoded_path}&type={stype}&bdstoken={BDSTOKEN}"
+            dlink_map = {}
+            for chunk in fs_id_chunks:
+                fsids_str = json.dumps(chunk)
+                encoded_fsids = urllib.parse.quote(fsids_str)
+                
+                metas_url = f"{BASE_API}/api/filemetas?{qp()}&fsids={encoded_fsids}&dlink=1&thumb=0&bdstoken={BDSTOKEN}"
                 try:
-                    sr = session.get(url, timeout=20)
-                    if sr.status_code == 200 and "#EXTM3U" in sr.text:
-                        return True, 0, sr.text
-                    err_code = None
-                    try:
-                        res_json = sr.json()
-                        err_code = res_json.get("errno")
-                    except Exception:
-                        pass
-                    return False, err_code, sr.text[:200]
+                    mr = session.get(metas_url, timeout=20)
+                    metas_res = mr.json()
+                    
+                    entries = metas_res.get("list", metas_res.get("info", []))
+                    for entry in entries:
+                        entry_fs_id = str(entry.get("fs_id", ""))
+                        entry_dlink = entry.get("dlink", "")
+                        if entry_fs_id and entry_dlink:
+                            dlink_map[entry_fs_id] = entry_dlink
                 except Exception as e:
-                    return False, -1, str(e)
-            
-            # PASS 1: Quick scan — try each resolution once to find any that's ready
-            best_m3u8 = None
-            all_transcoding = True
-            fatal_error = None
-            
-            for stype in stream_types:
-                ok, errno, text = _try_stream(stype)
-                if ok:
-                    best_m3u8 = (stype, text)
-                    all_transcoding = False
-                    break
-                elif errno == 130:
-                    # Transcoding in progress — try next (lower) resolution
-                    continue
-                elif errno in (31066,):
-                    # File format not supported for streaming at all
-                    fatal_error = f"File format not supported for streaming (errno {errno})"
-                    all_transcoding = False
-                    break
-                elif errno in (31341, 31023):
-                    fatal_error = f"File path error or not found (errno {errno})"
-                    all_transcoding = False
-                    break
-                else:
-                    # Unknown error on this type, try next
-                    all_transcoding = False
-                    file_res["error"] = f"Streaming API errno {errno}: {text}"
-                    continue
-            
-            if best_m3u8:
-                file_res["stream_ready"] = True
-                file_res["stream_m3u8"] = best_m3u8[1]
-                file_res["error"] = None
-            elif fatal_error:
-                file_res["error"] = fatal_error
-            elif all_transcoding and wait_for_transcoding:
-                # PASS 2: All resolutions are still transcoding — wait and retry
-                max_retries = 12
-                retry_delay = 10
-                print(f"  ⏳ All resolutions still transcoding, waiting (up to {max_retries * retry_delay}s)...")
-                for attempt in range(1, max_retries + 1):
-                    time.sleep(retry_delay)
-                    # Retry all types each round (highest first)
-                    for stype in stream_types:
-                        ok, errno, text = _try_stream(stype)
-                        if ok:
-                            file_res["stream_ready"] = True
-                            file_res["stream_m3u8"] = text
-                            file_res["error"] = None
-                            break
-                    if file_res["stream_ready"]:
-                        break
-                if not file_res["stream_ready"]:
-                    file_res["error"] = "transcoding_in_progress"
-            elif all_transcoding:
-                file_res["error"] = "transcoding_in_progress"
-        
-        # --- ACTION DOWNLOAD (or fallback when stream not ready) ---
-        if True:
-            # Direct link resolution via filemetas (which is robust and works without sign/timestamp)
-            metas_url = f"{BASE_API}/api/filemetas?{qp()}&fsids=[\"{my_fs_id}\"]&dlink=1&thumb=0&bdstoken={BDSTOKEN}"
-            try:
-                mr = session.get(metas_url)
-                metas_res = mr.json()
-                dlink = ""
-                for entry in metas_res.get("list", metas_res.get("info", [])):
-                    dlink = entry.get("dlink", "")
-                    if dlink:
-                        break
-                if dlink:
-                    file_res["dlink"] = dlink
-                elif action == "d":
-                    file_res["error"] = "Failed to resolve direct download link (dlink) from filemetas."
-            except Exception as e:
-                if action == "d":
-                    file_res["error"] = f"filemetas query failed: {e}"
+                    print(f"[ParallelResolve][ERROR] Batch filemetas request failed: {e}", flush=True)
 
-        results.append(file_res)
+            # Map the resolved direct links back to results
+            for r in results:
+                if r.get("fs_id") and not r.get("error"):
+                    my_fs_id = r["fs_id"]
+                    if my_fs_id in dlink_map:
+                        r["dlink"] = dlink_map[my_fs_id]
+                    elif action == "d":
+                        r["error"] = "Failed to resolve direct download link (dlink) from batch filemetas."
 
     return {
         "errno": 0,
@@ -511,6 +545,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False):
         "uk": uk,
         "files": results
     }
+
 
 def download_file(dlink, filename):
     print("✅ Direct download link retrieved successfully!")
