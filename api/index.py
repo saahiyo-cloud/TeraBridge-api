@@ -737,7 +737,10 @@ def generate_signature(param1, param2, param3="", exp=""):
     """
     if not HMAC_SECRET:
         return ""
-    message = f"{param1}|{param2}|{param3}|{exp}"
+    if exp != "":
+        message = f"{param1}|{param2}|{param3}|{exp}"
+    else:
+        message = f"{param1}|{param2}|{param3}"
     return hmac.new(HMAC_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
