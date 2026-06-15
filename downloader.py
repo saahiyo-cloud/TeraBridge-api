@@ -331,7 +331,12 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
     file_res["filename"] = filename
     
     # --- ACTION HLS STREAMING ---
-    if action == "s":
+    is_video = False
+    if filename:
+        ext = os.path.splitext(filename)[1].lower()
+        is_video = ext in ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
+
+    if action == "s" and is_video:
         if not my_file_path:
             my_file_path = ROOT_PATH.rstrip("/") + "/" + filename
         encoded_path = urllib.parse.quote(my_file_path)
