@@ -1223,12 +1223,12 @@ def stream_manifest():
     try:
         # CASE 1: Client wants the master multivariant playlist
         if not quality:
-            # Try to get ready qualities from cache
-            ready_qualities = cache.get(link, f"manifest:{file_index}", False)
+            # Try to get ready qualities list from cache
+            ready_qualities = cache.get(link, f"qualities:{file_index}", False)
             if ready_qualities:
-                print(f"[Manifest] Cache HIT for master manifest: {link}", flush=True)
+                print(f"[Manifest] Cache HIT for available qualities: {link} -> {list(ready_qualities.keys())}", flush=True)
             else:
-                print(f"[Manifest] Cache MISS for master manifest: {link}. Resolving...", flush=True)
+                print(f"[Manifest] Cache MISS for available qualities: {link}. Resolving...", flush=True)
                 # Resolve the link once to authenticate/transfer/find file
                 res = resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding)
                 if res.get("errno") != 0:
@@ -1279,7 +1279,6 @@ def stream_manifest():
                         sr = session.get(url, timeout=15)
                         if sr.status_code == 200 and "#EXTM3U" in sr.text:
                             return qname, {
-                                "m3u8": sr.text,
                                 "fs_id": matching_file.get("original_fs_id") or matching_file.get("fs_id")
                             }
                     except Exception as e:
@@ -1303,8 +1302,17 @@ def stream_manifest():
                         "message": "No streamable qualities are ready or transcoding for this video."
                     }), 404
 
-                # Cache the ready qualities for future master and sub-level requests
-                cache.put(link, f"manifest:{file_index}", False, ready_qualities)
+                # Cache the list of ready qualities
+                key = cache._make_key(link, f"qualities:{file_index}", False)
+                if redis_client:
+                    try:
+                        redis_key = f"cache:response:{key}"
+                        ttl = 86400 if not is_transcoding else 120
+                        redis_client.set(redis_key, json.dumps(ready_qualities), ex=ttl)
+                    except Exception as e:
+                        print(f"[Manifest][WARN] Redis cache save error: {e}", flush=True)
+                else:
+                    cache.put(link, f"qualities:{file_index}", False, ready_qualities)
 
             # Construct Master Playlist
             master_lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
@@ -1350,49 +1358,53 @@ def stream_manifest():
         if not qtype:
             qtype = "M3U8_AUTO_720"
 
-        # Check if the ready qualities manifest is already cached
-        cached_manifest = cache.get(link, f"manifest:{file_index}", False)
-        raw_m3u8 = ""
-        if cached_manifest and quality.lower() in cached_manifest:
-            print(f"[Manifest] Cache HIT for quality {quality} specific playlist!", flush=True)
-            raw_m3u8 = cached_manifest[quality.lower()]["m3u8"]
-        else:
-            print(f"[Manifest] Cache MISS for quality {quality} specific playlist. Resolving...", flush=True)
-            res = resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding, quality=qtype)
-            if res.get("errno") != 0:
+        # Check if the specific playlist is already cached short-term
+        cached_playlist = cache.get(link, f"playlist:{quality.lower()}:{file_index}", False)
+        if cached_playlist:
+            print(f"[Manifest] Cache HIT for specific quality playlist: {quality}", flush=True)
+            response = Response(cached_playlist, content_type="application/vnd.apple.mpegurl")
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+
+        print(f"[Manifest] Cache MISS for quality {quality} specific playlist. Resolving...", flush=True)
+        res = resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding, quality=qtype)
+        if res.get("errno") != 0:
+            return jsonify({
+                "status": "error",
+                "message": res.get("error", "Unknown resolution error occurred.")
+            }), 400
+
+        files = res.get("files", [])
+        streamable_files = [f for f in files if f.get("stream_ready")]
+
+        if not streamable_files:
+            return jsonify({
+                "status": "error",
+                "message": "Requested quality stream not ready or transcoding."
+            }), 202
+
+        if fs_id:
+            matching_idx = -1
+            for idx, f in enumerate(streamable_files):
+                if str(f.get("original_fs_id")) == str(fs_id) or str(f.get("fs_id")) == str(fs_id):
+                    matching_idx = idx
+                    break
+            if matching_idx != -1:
+                file_index = matching_idx
+            else:
                 return jsonify({
                     "status": "error",
-                    "message": res.get("error", "Unknown resolution error occurred.")
-                }), 400
+                    "message": "Requested file not found in share link."
+                }), 404
 
-            files = res.get("files", [])
-            streamable_files = [f for f in files if f.get("stream_ready")]
+        if file_index < 0 or file_index >= len(streamable_files):
+            file_index = 0
 
-            if not streamable_files:
-                return jsonify({
-                    "status": "error",
-                    "message": "Requested quality stream not ready or transcoding."
-                }), 202
-
-            if fs_id:
-                matching_idx = -1
-                for idx, f in enumerate(streamable_files):
-                    if str(f.get("original_fs_id")) == str(fs_id) or str(f.get("fs_id")) == str(fs_id):
-                        matching_idx = idx
-                        break
-                if matching_idx != -1:
-                    file_index = matching_idx
-                else:
-                    return jsonify({
-                        "status": "error",
-                        "message": "Requested file not found in share link."
-                    }), 404
-
-            if file_index < 0 or file_index >= len(streamable_files):
-                file_index = 0
-
-            target_file = streamable_files[file_index]
-            raw_m3u8 = target_file.get("stream_m3u8", "")
+        target_file = streamable_files[file_index]
+        raw_m3u8 = target_file.get("stream_m3u8", "")
 
         if not raw_m3u8:
             return jsonify({
@@ -1413,6 +1425,9 @@ def stream_manifest():
                 proxied_lines.append(line)
 
         proxied_m3u8 = "\n".join(proxied_lines)
+
+        # Cache the proxied specific quality playlist response short-term
+        cache.put(link, f"playlist:{quality.lower()}:{file_index}", False, proxied_m3u8)
 
         response = Response(proxied_m3u8, content_type="application/vnd.apple.mpegurl")
         response.headers["Access-Control-Allow-Origin"] = "*"
