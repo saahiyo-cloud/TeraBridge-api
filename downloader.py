@@ -53,7 +53,8 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, sign=None, ti
     global COOKIE, COOKIES_DICT, JSTOKEN, BDSTOKEN, SIGN, TIMESTAMP, LOGID, session
     if cookie:
         COOKIE = cookie
-        COOKIES_DICT = parse_cookies(cookie)
+        COOKIES_DICT.clear()
+        COOKIES_DICT.update(parse_cookies(cookie))
         # Clear existing cookies in session and update with new ones
         session.cookies.clear()
         session.cookies.update(COOKIES_DICT)
