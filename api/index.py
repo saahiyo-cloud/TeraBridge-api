@@ -914,6 +914,87 @@ def _format_resolved_response(res, link):
     return response_data, is_transcoding
 
 
+# ─── Background Quality Pre-Warming ─────────────────────────────────
+def _prewarm_quality_cache(link, res):
+    """
+    Background task: probe available HLS streaming qualities for the first
+    video file in the resolved share link and store results in cache.
+    This runs asynchronously so /api/resolve returns immediately while the
+    quality cache is warmed for the subsequent /api/stream/manifest call.
+    """
+    import concurrent.futures
+    import downloader
+
+    try:
+        files = res.get("files", [])
+        VIDEO_EXTS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
+
+        for file_index, f in enumerate(files):
+            filename = f.get("filename", "")
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in VIDEO_EXTS:
+                continue
+
+            # Check if this file's qualities are already cached
+            existing = cache.get(link, f"qualities:{file_index}", False)
+            if existing:
+                print(f"[PreWarm] Qualities already cached for file {file_index}: {list(existing.keys())}", flush=True)
+                continue
+
+            my_file_path = downloader.ROOT_PATH.rstrip("/") + "/" + filename
+            encoded_path = urllib.parse.quote(my_file_path)
+
+            qualities_to_check = {
+                "1080p": "M3U8_AUTO_1080",
+                "720p": "M3U8_AUTO_720",
+                "480p": "M3U8_AUTO_480",
+                "360p": "M3U8_AUTO_360"
+            }
+
+            matching_file = f
+            ready_qualities = {}
+
+            def check_quality(qname, qtype):
+                url = f"{downloader.BASE_API}/api/streaming?{downloader.qp()}&path={encoded_path}&type={qtype}&bdstoken={downloader.BDSTOKEN}"
+                try:
+                    sr = session.get(url, timeout=15)
+                    if sr.status_code == 200 and "#EXTM3U" in sr.text:
+                        return qname, {
+                            "fs_id": matching_file.get("original_fs_id") or matching_file.get("fs_id")
+                        }
+                except Exception as e:
+                    print(f"[PreWarm][ERROR] Quality {qname}: {e}", flush=True)
+                return qname, None
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = {
+                    executor.submit(check_quality, qname, qtype): qname
+                    for qname, qtype in qualities_to_check.items()
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    qname, res_data = future.result()
+                    if res_data:
+                        ready_qualities[qname] = res_data
+
+            if ready_qualities:
+                # Store in cache with 24h TTL
+                key = cache._make_key(link, f"qualities:{file_index}", False)
+                if redis_client:
+                    try:
+                        redis_key = f"cache:response:{key}"
+                        redis_client.set(redis_key, json.dumps(ready_qualities), ex=86400)
+                    except Exception as e:
+                        print(f"[PreWarm][WARN] Redis cache save error: {e}", flush=True)
+                else:
+                    cache.put(link, f"qualities:{file_index}", False, ready_qualities)
+                print(f"[PreWarm] Cached qualities for file {file_index}: {list(ready_qualities.keys())}", flush=True)
+            else:
+                print(f"[PreWarm] No streamable qualities found for file {file_index}", flush=True)
+
+    except Exception as e:
+        print(f"[PreWarm][ERROR] Background quality pre-warm failed: {e}", flush=True)
+
+
 # ─── Single Flight (Request Collapsing) locks ────────────────────────
 _single_flight_events = {}
 _single_flight_lock = threading.Lock()
@@ -1127,6 +1208,11 @@ def resolve():
         if is_transcoding and not wait_for_transcoding:
             import threading
             threading.Thread(target=_background_transcode_poll, args=(link, action, cache_key), daemon=True).start()
+
+        # ── Pre-warm HLS quality cache in background (for streaming requests) ──
+        if action == "s" and not is_transcoding:
+            import threading
+            threading.Thread(target=_prewarm_quality_cache, args=(link, res), daemon=True).start()
 
         # ── Store in Cache (don't cache transcoding-in-progress responses) ──
         if not is_transcoding:
