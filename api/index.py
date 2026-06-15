@@ -1170,6 +1170,15 @@ def stream_manifest():
     fs_id = request.args.get("fs_id") or ""
     sig = request.args.get("sig") or ""
     exp = request.args.get("exp") or ""
+    
+    link = request.args.get("url") or request.args.get("link") or ""
+    
+    # Dynamically resolve missing surl from link if possible
+    if not surl and link:
+        try:
+            surl = parse_surl(link)
+        except Exception:
+            pass
 
     # Authorize either via master key/Firebase token OR via valid signature
     is_authorized = check_auth() or (surl and fs_id and verify_signature(surl, fs_id, "manifest", sig, exp))
@@ -1186,7 +1195,6 @@ def stream_manifest():
         })
         return resp, 429
 
-    link = request.args.get("url") or request.args.get("link") or ""
     if not link and surl:
         link = f"https://1024terabox.com/s/{surl}"
 
@@ -1242,7 +1250,10 @@ def stream_manifest():
                                 matching_file = qfiles[file_index]
                                 
                             if matching_file and matching_file.get("stream_ready"):
-                                ready_qualities[qname] = matching_file.get("stream_m3u8")
+                                ready_qualities[qname] = {
+                                    "m3u8": matching_file.get("stream_m3u8"),
+                                    "fs_id": matching_file.get("original_fs_id") or matching_file.get("fs_id")
+                                }
                     except Exception as e:
                         print(f"[Manifest][ERROR] Failed to check quality {qname}: {e}", flush=True)
 
@@ -1275,22 +1286,32 @@ def stream_manifest():
             for qname in ["1080p", "720p", "480p", "360p"]:
                 if qname in ready_qualities:
                     meta = quality_metadata[qname]
+                    q_data = ready_qualities[qname]
+                    
+                    # Dynamically resolve surl and fs_id
+                    target_surl = surl
+                    target_fs_id = q_data.get("fs_id") or fs_id
+                    
+                    # Generate dynamic signature and expiry
+                    signed_qs = make_signed_params(target_surl, target_fs_id, "manifest", kind="manifest")
+                    
                     base = f"{_request_base_url()}/api/stream/manifest"
-                    params = {
-                        "surl": surl,
-                        "fs_id": fs_id,
-                        "sig": sig,
-                        "exp": exp,
-                        "quality": qname,
-                        "index": file_index
-                    }
-                    qs = urllib.parse.urlencode(params)
+                    proxy_url = f"{base}?surl={target_surl}&fs_id={target_fs_id}&quality={qname}&index={file_index}&{signed_qs}"
+                    
+                    # Propagate master API key if present in parent request
+                    client_key = request.args.get("key") or request.args.get("api_key")
+                    if client_key:
+                        proxy_url += f"&key={client_key}"
+                        
                     master_lines.append(f'#EXT-X-STREAM-INF:BANDWIDTH={meta["bandwidth"]},RESOLUTION={meta["resolution"]},NAME="{meta["name"]}"')
-                    master_lines.append(f"{base}?{qs}")
+                    master_lines.append(proxy_url)
 
             master_m3u8 = "\n".join(master_lines)
             response = Response(master_m3u8, content_type="application/vnd.apple.mpegurl")
             response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
             return response
 
         # CASE 2: Client requested a specific quality stream playlist
@@ -1356,6 +1377,9 @@ def stream_manifest():
 
         response = Response(proxied_m3u8, content_type="application/vnd.apple.mpegurl")
         response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
