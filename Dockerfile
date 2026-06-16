@@ -48,6 +48,9 @@ WORKDIR /app
 # media files never enter the image.
 COPY --chown=app:app . .
 
+# Ensure the /app directory itself is owned by the app user so they can write control sockets/temp files
+RUN chown app:app /app
+
 USER app
 
 EXPOSE 8000
