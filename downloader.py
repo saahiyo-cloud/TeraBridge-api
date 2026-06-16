@@ -465,7 +465,10 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
         return {"errno": -2, "error": f"Failed to query share list: {e}"}
 
     if share_data.get("errno") != 0:
-        return {"errno": share_data.get("errno"), "error": "Share link is invalid or expired."}
+        return {
+            "errno": share_data.get("errno"),
+            "error": f"Share link is invalid or expired (errno={share_data.get('errno')}, msg={share_data.get('errmsg', 'none')}, request_id={share_data.get('request_id', 'none')})."
+        }
 
     title = share_data.get("title", "Untitled Shared Content")
     share_id = share_data.get("share_id")
