@@ -22,7 +22,7 @@ This repository contains a lightweight, modular Python CLI utility and a Flask A
 
 Deploy this API directly to your platform of choice with a single click:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsaahiyo-cloud%2FTeraBridge-api&env=API_KEY,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN,CRON_SECRET) [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/saahiyo-cloud/TeraBridge-api)
+[![Deploy to Vercel](https://img.shields.io/badge/Deploy_to-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsaahiyo-cloud%2FTeraBridge-api&env=API_KEY,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN,CRON_SECRET) [![Deploy to Render](https://img.shields.io/badge/Deploy_to-Render-4613B1?style=for-the-badge&logo=render&logoColor=white)](https://render.com/deploy?repo=https://github.com/saahiyo-cloud/TeraBridge-api)
 
 ---
 
