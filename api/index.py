@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import ipaddress
+import concurrent.futures
 from collections import OrderedDict
 from flask import Flask, request, jsonify, Response
 import urllib.parse
@@ -27,6 +28,24 @@ from api.redis_client import redis_client
 from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY
 
 app = Flask(__name__)
+
+# ─── Gzip Compression ────────────────────────────────────────────────
+# Compresses JSON responses (and other large text bodies) for clients that
+# send Accept-Encoding: gzip. This significantly reduces bandwidth for the
+# /api/resolve payload (file lists with metadata, URLs, thumbnails), which
+# can shrink by 60-80%. Gracefully no-ops if the package is not installed.
+try:
+    from flask_compress import Compress
+    # Only compress responses >=500 bytes; smaller payloads cost more in CPU
+    # than they save in bytes.
+    Compress(app)
+    app.config["COMPRESS_MIN_SIZE"] = 500
+    app.config["COMPRESS_MIMETYPES"] = [
+        "text/html", "text/css", "text/xml",
+        "application/json", "application/javascript",
+    ]
+except ImportError:
+    print("[TeraBridge][INFO] flask-compress not installed; responses will not be gzip-compressed.", flush=True)
 
 # ─── Global CORS Setup ───────────────────────────────────────────────
 @app.before_request
@@ -136,7 +155,23 @@ def _client_ip():
          and return the first IP that is *not* in the trusted set.
       4. Direct connection  →  request.remote_addr.  XFF is ignored so a
          client cannot spoof their way around the per-IP rate limiter.
+
+    The result is memoized on the request object for the lifetime of the
+    request — endpoints like /api/resolve call this (and rate_limiter.remaining,
+    which re-resolves the IP) several times per request, so caching avoids
+    repeated XFF parsing and Redis round-trips.
     """
+    cached = getattr(request, "_cached_client_ip", None)
+    if cached is not None:
+        return cached
+
+    resolved = _resolve_client_ip()
+    request._cached_client_ip = resolved
+    return resolved
+
+
+def _resolve_client_ip():
+    """Inner resolver — does the actual proxy-aware IP computation."""
     # ── Case 1: Vercel ──────────────────────────────────────────────
     if ON_VERCEL:
         v = request.headers.get("X-Vercel-Forwarded-For")
@@ -415,6 +450,14 @@ class RateLimiter:
                 del self._requests[ip]
 
 rate_limiter = RateLimiter(max_requests=RATE_LIMIT_RPM, window_seconds=RATE_LIMIT_WINDOW, redis_client=redis_client)
+
+# Module-level shared thread pool for parallel quality probing.
+# Previously each /api/resolve and /api/stream/manifest call created (and tore
+# down) its own ThreadPoolExecutor(max_workers=4), which adds avoidable
+# per-request overhead. A single reusable pool amortizes that cost.
+_quality_probe_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="quality-probe"
+)
 
 # Background cleanup every 5 minutes to prevent stale IP accumulation
 def _periodic_cleanup():
@@ -922,7 +965,6 @@ def _prewarm_quality_cache(link, res):
     This runs asynchronously so /api/resolve returns immediately while the
     quality cache is warmed for the subsequent /api/stream/manifest call.
     """
-    import concurrent.futures
     import downloader
 
     try:
@@ -966,15 +1008,15 @@ def _prewarm_quality_cache(link, res):
                     print(f"[PreWarm][ERROR] Quality {qname}: {e}", flush=True)
                 return qname, None
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                futures = {
-                    executor.submit(check_quality, qname, qtype): qname
-                    for qname, qtype in qualities_to_check.items()
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    qname, res_data = future.result()
-                    if res_data:
-                        ready_qualities[qname] = res_data
+            executor = _quality_probe_executor
+            futures = {
+                executor.submit(check_quality, qname, qtype): qname
+                for qname, qtype in qualities_to_check.items()
+            }
+            for future in concurrent.futures.as_completed(futures):
+                qname, res_data = future.result()
+                if res_data:
+                    ready_qualities[qname] = res_data
 
             if ready_qualities:
                 # Store in cache with 24h TTL
@@ -1266,8 +1308,14 @@ def stream_manifest():
         except Exception:
             pass
 
-    # Authorize either via master key/Firebase token OR via valid signature
-    is_authorized = check_auth() or (surl and fs_id and verify_signature(surl, fs_id, "manifest", sig, exp))
+    # Authorize either via master key/Firebase token OR via valid signature.
+    # Prefer the signature path when sig/exp are present — it is a single
+    # constant-time HMAC and avoids the header-parsing / Firebase JWT work
+    # that check_auth() does on every streaming client request.
+    is_authorized = (
+        (surl and fs_id and sig and verify_signature(surl, fs_id, "manifest", sig, exp))
+        or check_auth()
+    )
     if not is_authorized:
         return jsonify({"status": "error", "message": "Unauthorized: Invalid signature or authentication."}), 401
 
@@ -1355,7 +1403,6 @@ def stream_manifest():
                 my_file_path = downloader.ROOT_PATH.rstrip("/") + "/" + filename
                 encoded_path = urllib.parse.quote(my_file_path)
 
-                import concurrent.futures
                 ready_qualities = {}
 
                 # Query the 4 resolutions in parallel using lightweight GET requests
@@ -1371,16 +1418,16 @@ def stream_manifest():
                         print(f"[Manifest][ERROR] Failed to check quality {qname}: {e}", flush=True)
                     return qname, None
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                    futures = {
-                        executor.submit(check_streaming_quality, qname, qtype): qname
-                        for qname, qtype in qualities_to_check.items()
-                    }
-                    for future in concurrent.futures.as_completed(futures):
-                        qname = futures[future]
-                        res_data = future.result()[1]
-                        if res_data:
-                            ready_qualities[qname] = res_data
+                executor = _quality_probe_executor
+                futures = {
+                    executor.submit(check_streaming_quality, qname, qtype): qname
+                    for qname, qtype in qualities_to_check.items()
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    qname = futures[future]
+                    res_data = future.result()[1]
+                    if res_data:
+                        ready_qualities[qname] = res_data
 
                 if not ready_qualities:
                     return jsonify({
@@ -1548,8 +1595,10 @@ def stream_segment():
 
     target_url = url
 
-    # Authorize either via master key OR via valid signature
-    if not check_auth() and not verify_signature(target_url, "", "", sig, exp):
+    # Authorize either via master key OR via valid signature.
+    # Prefer the signature path first (cheap HMAC) for segment requests,
+    # which are the highest-volume streaming traffic.
+    if not (sig and verify_signature(target_url, "", "", sig, exp)) and not check_auth():
         return "Unauthorized: Invalid signature or API key.", 401
 
     # SSRF Protection
@@ -1688,9 +1737,10 @@ def stream_thumbnail():
     if not url and not (surl and fs_id):
         return "Missing thumbnail URL or surl/fs_id parameters", 400
 
-    # Authorize either via master key OR via valid signature
+    # Authorize either via master key OR via valid signature.
+    # For the surl/fs_id path (signed URL), prefer the cheap HMAC check first.
     if not url:
-        if not check_auth() and not verify_signature(surl, fs_id, size_type, sig, exp):
+        if not (sig and verify_signature(surl, fs_id, size_type, sig, exp)) and not check_auth():
             return "Unauthorized: Invalid signature or API key.", 401
     else:
         if not check_auth():
@@ -1820,8 +1870,9 @@ def download_file_route():
     if not surl or not fs_id:
         return "Missing required parameters: surl and fs_id", 400
 
-    # Authorize either via master key OR via valid signature
-    if not check_auth() and not verify_signature(surl, fs_id, "", sig, exp):
+    # Authorize either via master key OR via valid signature.
+    # Prefer the cheap HMAC signature check first.
+    if not (sig and verify_signature(surl, fs_id, "", sig, exp)) and not check_auth():
         return "Unauthorized: Invalid signature or API key.", 401
 
     share_url = f"https://1024terabox.com/s/{surl}"

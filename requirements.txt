@@ -4,3 +4,5 @@ waitress==3.0.2
 python-dotenv==1.0.1
 upstash-redis>=1.0.0
 PyJWT[crypto]>=2.8.0
+flask-compress>=1.15
+gunicorn>=22.0.0

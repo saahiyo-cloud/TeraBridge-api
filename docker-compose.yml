@@ -1,0 +1,43 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: terabridge-api:latest
+    container_name: terabridge-api
+    restart: unless-stopped
+
+    # Secrets live in .env (gitignored, never baked into the image).
+    # docker-compose reads it automatically; env_file below makes the
+    # dependency explicit and lets you swap in a different file via
+    #   docker compose --env-file prod.env up -d
+    env_file:
+      - .env
+
+    ports:
+      # HOST:CONTAINER. Override the host port if 8000 is taken:
+      #   PORT_PUBLIC=9000 docker compose up -d
+      - "${PORT_PUBLIC:-8000}:${PORT:-8000}"
+
+    environment:
+      # Signal that the app runs behind a trusted proxy so it reads
+      # X-Forwarded-* headers correctly. The Docker bridge network acts
+      # as a trusted loopback hop. For a real reverse proxy (nginx,
+      # Cloudflare Tunnel) set TRUSTED_PROXIES to its IP/CIDR in .env.
+      - PYTHONUNBUFFERED=1
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${PORT:-8000}/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # Gunicorn tuning is read from env by gunicorn.conf.py. Override in
+    # .env for different host sizing without rebuilding the image:
+    #   GUNICORN_WORKERS, GUNICORN_THREADS, GUNICORN_TIMEOUT
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

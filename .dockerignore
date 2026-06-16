@@ -1,0 +1,59 @@
+# ─── Secrets (NEVER bake into an image) ──────────────────────────────
+# .env holds API_KEY, HMAC_SECRET, Upstash Redis tokens, and TeraBox
+# cookies. It is injected at runtime via --env-file / docker-compose
+# env_file, never shipped in the image.
+.env
+.env.*
+!.env.example
+
+# ─── Version control & agent tooling ─────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+.agents/
+skills-lock.json
+
+# ─── Docker artifacts (don't recurse into the build context) ─────────
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# ─── Vercel / serverless config (unused in the container runtime) ────
+vercel.json
+
+# ─── Python caches & build artifacts ─────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# ─── Editor / OS cruft ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Logs & temp files ───────────────────────────────────────────────
+*.log
+*.pid
+
+# ─── Media samples that may exist in the working tree ────────────────
+# (mirrors .gitignore so test media isn't copied into the image)
+*.mp4
+*.m3u8
+*.ts
+
+# ─── Docs & test harnesses not needed at runtime ─────────────────────
+README.md
+load_test.py
