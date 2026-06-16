@@ -16,7 +16,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python api/index.py
-    instanceType: free
+    plan: free
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.4"
