@@ -1,5 +1,7 @@
 # TeraBridge API
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsaahiyo-cloud%2FTeraBridge-api&env=API_KEY,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN,CRON_SECRET) [![Deploy to Render](https://render.com/images/deploy-to-render.svg)](https://render.com/deploy?repo=https://github.com/saahiyo-cloud/TeraBridge-api)
+
 This repository contains a lightweight, modular Python CLI utility and a Flask API designed for retrieving direct download links and playable HLS `.m3u8` streaming manifests from Terabox shared folders. It is configured to run locally or deploy to **Render** (free plan), **Docker**, or **Vercel**.
 
 ---
