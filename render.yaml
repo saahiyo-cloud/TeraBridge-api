@@ -51,6 +51,12 @@ services:
       - key: REDIRECT_SEGMENTS
         value: "true"
 
+      # ── Upstash Redis (Optional for persistent caching & rate limiting) ──
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+
       # ── Optional overrides (defaults in code) ────────────────────────
       # - key: RATE_LIMIT_RPM
       #   value: "30"
