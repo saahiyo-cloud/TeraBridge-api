@@ -1,0 +1,62 @@
+# Render.com Blueprint — Infrastructure as Code
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy with:
+#   1. Push this file to your repo on GitHub.
+#   2. Create a new "Blueprint" service on Render and connect the repo.
+#   3. Render auto-creates the Web Service using these specs.
+#
+# Free-plan limits: 512 MB RAM, 0.1 CPU, spins down after 15 min idle,
+# 750 hrs/month. Cold starts take ~30-60 s. Use REDIRECT_SEGMENTS=true
+# to avoid the 100 s request-timeout limit on proxied segments.
+
+services:
+  - type: web
+    name: terabridge-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python api/index.py
+    instanceType: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      - key: RENDER
+        value: "true"
+
+      # ── TeraBox credentials ──────────────────────────────────────────
+      # Required — fill these in on the Render dashboard (Environment tab)
+      # after the first deploy. NEVER commit real values to the repo.
+      - key: TERABOX_COOKIE
+        sync: false
+      - key: TERABOX_JSTOKEN
+        sync: false
+      - key: TERABOX_BDSTOKEN
+        sync: false
+      - key: TERABOX_SIGN
+        sync: false
+      - key: TERABOX_TIMESTAMP
+        sync: false
+      - key: TERABOX_LOGID
+        sync: false
+
+      # ── API authentication ───────────────────────────────────────────
+      - key: API_KEY
+        generateValue: true   # auto-generates a secret on first deploy
+      - key: REQUIRE_API_KEY
+        value: "1"
+
+      # ── Free-plan tuning ─────────────────────────────────────────────
+      # 307-redirect segments to CDN instead of proxying. Avoids the free
+      # tier's 100 s request timeout and cuts egress ~90%.
+      - key: REDIRECT_SEGMENTS
+        value: "true"
+
+      # ── Optional overrides (defaults in code) ────────────────────────
+      # - key: RATE_LIMIT_RPM
+      #   value: "30"
+      # - key: CACHE_TTL
+      #   value: "60"
+      # - key: CACHE_MAX_ENTRIES
+      #   value: "256"
+      # - key: CRON_SECRET
+      #   sync: false
