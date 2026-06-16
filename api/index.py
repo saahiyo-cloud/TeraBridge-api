@@ -1908,6 +1908,28 @@ def download_file_route():
         return f"Download proxy encountered an error: {str(e)}", 500
 
 
+@app.route("/api/debug_curl", methods=["GET"])
+def debug_curl():
+    if not check_admin():
+        return "Unauthorized", 401
+    url = request.args.get("url")
+    if not url:
+        return "Missing url", 400
+    try:
+        req = session.get(url, headers={"User-Agent": UA}, cookies=COOKIES_DICT, timeout=15)
+        try:
+            body = req.json()
+        except Exception:
+            body = req.text[:2000]
+        return jsonify({
+            "status_code": req.status_code,
+            "headers": dict(req.headers),
+            "body": body
+        })
+    except Exception as e:
+        return str(e), 500
+
+
 # ─── Dynamic Config Sync ─────────────────────────────────────────────
 _last_config_check = 0
 CONFIG_CHECK_INTERVAL = 60 # seconds
