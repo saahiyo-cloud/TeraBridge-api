@@ -9,3 +9,5 @@ __pycache__/
 skills-lock.json
 .agents
 venv
+
+compare_speed.py

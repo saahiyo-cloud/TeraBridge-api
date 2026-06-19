@@ -47,25 +47,6 @@ try:
 except ImportError:
     print("[TeraBridge][INFO] flask-compress not installed; responses will not be gzip-compressed.", flush=True)
 
-# ─── Global CORS Setup ───────────────────────────────────────────────
-@app.before_request
-def handle_options_preflight():
-    if request.method == "OPTIONS":
-        resp = Response()
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Headers"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        resp.headers["Access-Control-Expose-Headers"] = "*"
-        return resp
-
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Expose-Headers"] = "*"
-    return response
-
 # ─── Configuration ───────────────────────────────────────────────────
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL", 60))         # Cache responses for 60s
 CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", 256)) # LRU eviction after 256 entries
@@ -77,6 +58,74 @@ REQUIRE_API_KEY   = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0
 TRUSTED_PROXY_CIDRS_RAW = os.environ.get("TRUSTED_PROXIES", "").strip()
 CRON_SECRET             = os.environ.get("CRON_SECRET")
 NOTIFICATION_WEBHOOK_URL = os.environ.get("NOTIFICATION_WEBHOOK_URL")
+
+# ─── CORS Origin Allowlist ───────────────────────────────────────────
+# Comma-separated list of exact origins permitted to call this API from a
+# browser, e.g. "https://teraplay.vercel.app,https://admin.vercel.app".
+# When set, the request's Origin header must match an entry exactly; the
+# matching origin is reflected back in Access-Control-Allow-Origin.
+# When unset, CORS is only open (*) in local-dev mode — i.e. when
+# REQUIRE_API_KEY is also disabled. In production (API_KEY set) an unset
+# allowlist fails closed: no ACAO header is emitted for cross-origin
+# browser requests, while non-browser clients (VLC, curl, the signed-URL
+# HLS pipeline) are unaffected because they don't enforce CORS at all.
+ALLOWED_ORIGINS_RAW = os.environ.get("ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = frozenset(
+    o.strip().rstrip("/") for o in ALLOWED_ORIGINS_RAW.split(",") if o.strip()
+)
+
+
+def _cors_origin_for_request():
+    """
+    Return the origin string to reflect in Access-Control-Allow-Origin, or
+    None when the request must NOT be allowed cross-origin.
+
+    Rules:
+      - ALLOWED_ORIGINS configured and Origin matches an entry → reflect it.
+      - ALLOWED_ORIGINS configured but no match → None (deny).
+      - ALLOWED_ORIGINS empty AND Origin is localhost → reflect it
+        (safe local-dev bypass; production domains never start with these).
+      - ALLOWED_ORIGINS empty AND REQUIRE_API_KEY disabled (local dev) → '*'.
+      - ALLOWED_ORIGINS empty AND production → None (fail closed).
+    """
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if ALLOWED_ORIGINS:
+        return origin if origin in ALLOWED_ORIGINS else None
+    # Local-dev bypass: accept localhost/127.0.0.1 on any port. This only
+    # affects browser-origin checks — the request still needs valid auth
+    # (Firebase JWT or master key) to actually reach protected endpoints.
+    if origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1"):
+        return origin
+    # Fallback: only allow the wildcard when auth is also open.
+    if not REQUIRE_API_KEY:
+        return "*"
+    return None
+
+
+# ─── Global CORS Setup ───────────────────────────────────────────────
+@app.before_request
+def handle_options_preflight():
+    if request.method == "OPTIONS":
+        resp = Response()
+        allowed_origin = _cors_origin_for_request()
+        if allowed_origin:
+            resp.headers["Access-Control-Allow-Origin"] = allowed_origin
+            resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Expose-Headers"] = "*"
+        return resp
+
+@app.after_request
+def add_cors_headers(response):
+    allowed_origin = _cors_origin_for_request()
+    if allowed_origin:
+        response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+    return response
 REDIRECT_SEGMENTS = os.environ.get("REDIRECT_SEGMENTS", "False").lower() in ("true", "1")
 
 
@@ -915,10 +964,15 @@ def _format_resolved_response(res, link):
                         signed = make_signed_params(surl, original_fs_id, k, kind="thumbnail")
                         proxy_url = f"{_request_base_url()}/api/thumbnail?surl={surl}&fs_id={original_fs_id}&size_type={k}&{signed}"
                     else:
+                        # No surl/fs_id to build a normal signed URL, so sign
+                        # the raw thumbnail URL itself (HMAC over the URL
+                        # string). This authenticates the proxy request WITHOUT
+                        # embedding the master API_KEY in the URL — the old
+                        # code did `&key={API_KEY}`, which leaked the master
+                        # key into the browser network tab and Firebase RTDB.
                         quoted_v = urllib.parse.quote(v)
-                        proxy_url = f"{_request_base_url()}/api/thumbnail?url={quoted_v}"
-                        if API_KEY:
-                            proxy_url += f"&key={API_KEY}"
+                        signed = make_signed_params(v, "", "", kind="thumbnail")
+                        proxy_url = f"{_request_base_url()}/api/thumbnail?url={quoted_v}&{signed}"
                     proxied_thumbs[k] = proxy_url
 
         # Shortened download proxy link
@@ -1737,14 +1791,18 @@ def stream_thumbnail():
     if not url and not (surl and fs_id):
         return "Missing thumbnail URL or surl/fs_id parameters", 400
 
-    # Authorize either via master key OR via valid signature.
-    # For the surl/fs_id path (signed URL), prefer the cheap HMAC check first.
+    # Authorize either via master key/Firebase JWT OR via valid signature.
+    # - surl/fs_id path: HMAC over (surl, fs_id, size_type)
+    # - raw ?url= path: HMAC over the URL string itself (sig generated at
+    #   resolve time so the master key never appears in the URL)
+    # For both paths we prefer the cheap HMAC check before falling back to
+    # check_auth() (which parses headers / verifies a Firebase JWT).
     if not url:
         if not (sig and verify_signature(surl, fs_id, size_type, sig, exp)) and not check_auth():
             return "Unauthorized: Invalid signature or API key.", 401
     else:
-        if not check_auth():
-            return "Unauthorized: Invalid API key.", 401
+        if not (sig and verify_signature(url, "", "", sig, exp)) and not check_auth():
+            return "Unauthorized: Invalid signature or API key.", 401
 
     target_url = ""
     if url:
@@ -2193,10 +2251,22 @@ def cron_validate():
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         return resp
 
-    # Validate secret parameter to prevent spam
+    # Authorization: accept either the master API key (admin panel) or a
+    # dedicated CRON_SECRET (external cron services like cron-job.org).
+    #
+    # The master key is checked via check_admin() so it is never compared
+    # directly here — that path already uses hmac.compare_digest(). For the
+    # CRON_SECRET, we use a constant-time comparison ourselves to avoid the
+    # timing-oracle that a naive `!=` would create.
     client_secret = request.args.get("secret") or (request.get_json(silent=True) or {}).get("secret")
-    if CRON_SECRET and client_secret != CRON_SECRET:
-        return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing cron secret."}), 401
+    is_master = check_admin()
+    is_cron_ok = bool(
+        CRON_SECRET
+        and client_secret
+        and hmac.compare_digest(str(client_secret), str(CRON_SECRET))
+    )
+    if not (is_master or is_cron_ok):
+        return jsonify({"status": "error", "message": "Unauthorized: Invalid or missing cron secret or admin key."}), 401
 
     # Load active cookie from Redis pool or fall back to environment variable
     active_cookie = None
