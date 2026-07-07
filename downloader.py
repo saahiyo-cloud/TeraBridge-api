@@ -1,4 +1,5 @@
-import requests
+import httpx
+import asyncio
 import json
 import urllib.parse
 import sys
@@ -6,9 +7,6 @@ import re
 import os
 import zipfile
 import time
-import concurrent.futures
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # Load environment variables from .env file if present
 try:
@@ -57,7 +55,8 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, sign=None, ti
         COOKIES_DICT.update(parse_cookies(cookie))
         # Clear existing cookies in session and update with new ones
         session.cookies.clear()
-        session.cookies.update(COOKIES_DICT)
+        for k, v in COOKIES_DICT.items():
+            session.cookies.set(k, v)
     if js_token:
         JSTOKEN = js_token
     if bds_token:
@@ -69,23 +68,21 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, sign=None, ti
     if logid:
         LOGID = logid
 
-def validate_session_cookie(cookie_str):
+async def validate_session_cookie(cookie_str):
     """Verify if a TeraBox cookie is valid by making a test request and checking for a bdstoken."""
-    temp_session = requests.Session()
-    temp_session.headers.update(HEADERS)
     temp_cookies = parse_cookies(cookie_str)
-    temp_session.cookies.update(temp_cookies)
     
     try:
-        r = temp_session.get(f"{BASE_API}/main", timeout=15)
-        if r.status_code != 200:
-            return False, f"HTTP status {r.status_code}"
-        
-        # Look for bdstoken in the response HTML to verify successful session
-        m = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r.text, re.IGNORECASE)
-        if m:
-            return True, "Valid"
-        return False, "bdstoken not found (session likely expired or invalid)"
+        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, timeout=15.0) as temp_client:
+            r = await temp_client.get(f"{BASE_API}/main")
+            if r.status_code != 200:
+                return False, f"HTTP status {r.status_code}"
+            
+            # Look for bdstoken in the response HTML to verify successful session
+            m = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r.text, re.IGNORECASE)
+            if m:
+                return True, "Valid"
+            return False, "bdstoken not found (session likely expired or invalid)"
     except Exception as e:
         return False, f"Request failed: {str(e)}"
 
@@ -103,28 +100,17 @@ def qp():
     return f"app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={JSTOKEN}&dp-logid={LOGID}"
 
 def _create_session():
-    """Create a requests session with connection pooling and automatic retry."""
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    s.cookies.update(COOKIES_DICT)
-
-    # Retry strategy: 3 retries with exponential backoff on server errors
-    retry_strategy = Retry(
-        total=3,
-        backoff_factor=0.5,
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET", "POST"],
-    )
-    # Connection pooling: keep up to 10 connections, max 20 in the pool
+    """Create an httpx.AsyncClient with connection pooling."""
     pool_conn = int(os.environ.get("HTTP_POOL_CONNECTIONS", 50))
     pool_max = int(os.environ.get("HTTP_POOL_MAXSIZE", 100))
-    adapter = HTTPAdapter(
-        pool_connections=pool_conn,
-        pool_maxsize=pool_max,
-        max_retries=retry_strategy,
+    limits = httpx.Limits(max_keepalive_connections=pool_conn, max_connections=pool_max)
+    
+    s = httpx.AsyncClient(
+        headers=HEADERS,
+        cookies=COOKIES_DICT,
+        limits=limits,
+        timeout=httpx.Timeout(30.0)
     )
-    s.mount("https://", adapter)
-    s.mount("http://", adapter)
     return s
 
 session = _create_session()
@@ -226,10 +212,10 @@ def show(label, r):
         print(f"  {r.text[:400]}")
         return {}
 
-def _process_single_file_metadata(item, share_id, uk, existing_files, action, wait_for_transcoding, bdstoken_val, quality=None):
+async def _process_single_file_metadata(item, share_id, uk, existing_files, action, wait_for_transcoding, bdstoken_val, quality=None):
     """
     Processes a single file from the shared link (transfer + streaming checks).
-    This function is run in a ThreadPoolExecutor.
+    This function is run asynchronously.
     """
     filename = item.get("server_filename")
     fs_id = item.get("fs_id")
@@ -277,7 +263,7 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
             "bdstoken":  bdstoken_val,
         }
         try:
-            tr = session.post(
+            tr = await session.post(
                 f"{BASE_API}/share/transfer?{qp()}&bdstoken={bdstoken_val}",
                 data=transfer_payload
             )
@@ -311,7 +297,7 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
             # Fallback search
             encoded_dir = urllib.parse.quote(ROOT_PATH)
             try:
-                r_list = session.get(
+                r_list = await session.get(
                     f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=20&bdstoken={bdstoken_val}"
                 )
                 list_res = r_list.json()
@@ -349,11 +335,11 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
         else:
             stream_types = ["M3U8_AUTO_1080", "M3U8_AUTO_720", "M3U8_AUTO_480", "M3U8_AUTO_360"]
         
-        def _try_stream(stype):
+        async def _try_stream(stype):
             """Try a single streaming request. Returns (success, errno, response_text)."""
             url = f"{BASE_API}/api/streaming?{qp()}&path={encoded_path}&type={stype}&bdstoken={bdstoken_val}"
             try:
-                sr = session.get(url, timeout=20)
+                sr = await session.get(url, timeout=20.0)
                 if sr.status_code == 200 and "#EXTM3U" in sr.text:
                     return True, 0, sr.text
                 err_code = None
@@ -372,7 +358,7 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
         fatal_error = None
         
         for stype in stream_types:
-            ok, errno, text = _try_stream(stype)
+            ok, errno, text = await _try_stream(stype)
             if ok:
                 best_m3u8 = (stype, text)
                 all_transcoding = False
@@ -407,10 +393,10 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
             retry_delay = 10
             print(f"  ⏳ All resolutions still transcoding, waiting (up to {max_retries * retry_delay}s)...")
             for attempt in range(1, max_retries + 1):
-                time.sleep(retry_delay)
+                await asyncio.sleep(retry_delay)
                 # Retry all types each round (highest first)
                 for stype in stream_types:
-                    ok, errno, text = _try_stream(stype)
+                    ok, errno, text = await _try_stream(stype)
                     if ok:
                         file_res["stream_ready"] = True
                         file_res["stream_m3u8"] = text
@@ -425,7 +411,7 @@ def _process_single_file_metadata(item, share_id, uk, existing_files, action, wa
 
     return file_res
 
-def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
+async def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
     """
     Exposes the core resolution logic.
     Returns a dict with metadata, transfer status, direct links, or streaming playlists.
@@ -434,7 +420,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
     
     # 1. Fetch current session tokens dynamically if needed
     try:
-        r_main = session.get(f"{BASE_API}/main", headers=HEADERS)
+        r_main = await session.get(f"{BASE_API}/main", headers=HEADERS)
         m1 = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r_main.text, re.IGNORECASE)
         if m1:
             BDSTOKEN = m1[0]
@@ -461,7 +447,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
         f"?app_id=250528&shorturl={surl}&root=1&order=name&desc=0&showempty=0&web=1&page=1&num=100"
     )
     try:
-        r = session.get(list_url)
+        r = await session.get(list_url)
         share_data = r.json()
     except Exception as e:
         return {"errno": -2, "error": f"Failed to query share list: {e}"}
@@ -482,7 +468,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
     if action != "l":
         encoded_dir = urllib.parse.quote(ROOT_PATH)
         try:
-            r_list = session.get(
+            r_list = await session.get(
                 f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=100&bdstoken={BDSTOKEN}"
             )
             list_res = r_list.json()
@@ -497,23 +483,20 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
         except Exception:
             pass
 
-    # Run the file metadata/transfer checks in parallel using ThreadPoolExecutor
-    max_workers = min(10, len(files_list)) if files_list else 1
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures_list = [
-            executor.submit(
-                _process_single_file_metadata,
-                item,
-                share_id,
-                uk,
-                existing_files,
-                action,
-                wait_for_transcoding,
-                BDSTOKEN,
-                quality
-            ) for item in files_list
-        ]
-        results = [f.result() for f in futures_list]
+    # Run the file metadata/transfer checks in parallel using asyncio.gather
+    tasks = [
+        _process_single_file_metadata(
+            item,
+            share_id,
+            uk,
+            existing_files,
+            action,
+            wait_for_transcoding,
+            BDSTOKEN,
+            quality
+        ) for item in files_list
+    ]
+    results = await asyncio.gather(*tasks)
 
     # Batch resolve direct download links (dlink) via filemetas
     # We only query filemetas for successful files (valid fs_id, no error) and when action is not list-only
@@ -532,7 +515,7 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
                 
                 metas_url = f"{BASE_API}/api/filemetas?{qp()}&fsids={encoded_fsids}&dlink=1&thumb=0&bdstoken={BDSTOKEN}"
                 try:
-                    mr = session.get(metas_url, timeout=20)
+                    mr = await session.get(metas_url, timeout=20.0)
                     metas_res = mr.json()
                     
                     entries = metas_res.get("list", metas_res.get("info", []))
@@ -561,74 +544,70 @@ def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
         "files": results
     }
 
-    return {
-        "errno": 0,
-        "title": title,
-        "share_id": share_id,
-        "uk": uk,
-        "files": results
-    }
-
-def download_file(dlink, filename):
+async def download_file(dlink, filename):
     print("✅ Direct download link retrieved successfully!")
     print(f"   Link: {dlink[:100]}...")
 
     # Stream the download
     print(f"Downloading to local file: {filename} ...")
-    dr = session.get(
-        dlink,
-        headers={
-            "User-Agent": UA,
-            "Referer": BASE_API + "/",
-        },
-        cookies=COOKIES_DICT,
-        stream=True,
-        allow_redirects=True,
-        timeout=120
-    )
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=120.0) as dl_client:
+            async with dl_client.stream(
+                "GET",
+                dlink,
+                headers={
+                    "User-Agent": UA,
+                    "Referer": BASE_API + "/",
+                },
+                cookies=COOKIES_DICT,
+            ) as dr:
+                content_type = dr.headers.get("Content-Type", "")
+                content_length = int(dr.headers.get("Content-Length", 0))
+                print(f"  HTTP Response: {dr.status_code} | Type: {content_type} | Size: {content_length/1024/1024:.2f} MB")
 
-    content_type = dr.headers.get("Content-Type", "")
-    content_length = int(dr.headers.get("Content-Length", 0))
-    print(f"  HTTP Response: {dr.status_code} | Type: {content_type} | Size: {content_length/1024/1024:.2f} MB")
+                if dr.status_code not in (200, 206) or content_length < 1000:
+                    print(f"❌ Bad download stream response: {(await dr.aread())[:300].decode('utf-8', errors='ignore')}")
+                    return False
 
-    if dr.status_code not in (200, 206) or content_length < 1000:
-        print(f"❌ Bad download stream response: {dr.text[:300]}")
+                is_zip = "zip" in content_type.lower()
+                temp_filename = filename + ".zip" if is_zip else filename
+
+                # Write chunks to file
+                with open(temp_filename, "wb") as f:
+                    downloaded = 0
+                    async for chunk in dr.iter_bytes(1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            pct = downloaded / content_length * 100 if content_length else 0
+                            bar = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
+                            print(f"\r  [{bar}] {pct:.1f}%  {downloaded/1024/1024:.1f}/{content_length/1024/1024:.1f} MB", end="", flush=True)
+                    print()
+
+                if is_zip:
+                    print("📦 Extracting ZIP archive...")
+                    try:
+                        def extract_zip():
+                            with zipfile.ZipFile(temp_filename, "r") as zf:
+                                for info in zf.infolist():
+                                    zf.extract(info, ".")
+                                    print(f"   Saved: {info.filename}")
+                            os.remove(temp_filename)
+                        await asyncio.to_thread(extract_zip)
+                        print(f"✅ Extraction completed successfully!")
+                        return True
+                    except Exception as e:
+                        print(f"⚠️ Error extracting ZIP: {e}")
+                        print(f"ZIP file kept at: {temp_filename}")
+                        return False
+                else:
+                    print(f"✅ Successfully saved: {filename}")
+                    return True
+    except Exception as e:
+        print(f"❌ Download failed: {e}")
         return False
 
-    is_zip = "zip" in content_type.lower()
-    temp_filename = filename + ".zip" if is_zip else filename
-
-    # Write chunks to file
-    with open(temp_filename, "wb") as f:
-        downloaded = 0
-        for chunk in dr.iter_content(1024 * 1024):
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-                pct = downloaded / content_length * 100 if content_length else 0
-                bar = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
-                print(f"\r  [{bar}] {pct:.1f}%  {downloaded/1024/1024:.1f}/{content_length/1024/1024:.1f} MB", end="", flush=True)
-        print()
-
-    if is_zip:
-        print("📦 Extracting ZIP archive...")
-        try:
-            with zipfile.ZipFile(temp_filename, "r") as zf:
-                for info in zf.infolist():
-                    zf.extract(info, ".")
-                    print(f"   Saved: {info.filename}")
-            os.remove(temp_filename)
-            print(f"✅ Extraction completed successfully!")
-            return True
-        except Exception as e:
-            print(f"⚠️ Error extracting ZIP: {e}")
-            print(f"ZIP file kept at: {temp_filename}")
-            return False
-    else:
-        print(f"✅ Successfully saved: {filename}")
-        return True
-
-def main():
+async def main():
     global BDSTOKEN, JSTOKEN
 
     print("=" * 60)
@@ -669,7 +648,7 @@ def main():
 
     print("Resolving Terabox link details...")
     # Call resolve_link with wait_for_transcoding=True since this is a CLI run
-    res = resolve_link(link, action=action, wait_for_transcoding=True)
+    res = await resolve_link(link, action=action, wait_for_transcoding=True)
 
     if res.get("errno") != 0:
         print(f"❌ Error: {res.get('error')}")
@@ -711,16 +690,19 @@ def main():
             else:
                 choice = input("\nStreaming playlist generation failed (transcoding). Would you like to [D]ownload the raw file instead or [E]xit/Skip? (D/E): ").strip().lower()
                 if choice == "d":
-                    download_res = resolve_link(link, action="d")
+                    download_res = await resolve_link(link, action="d")
                     download_file_info = next((f for f in download_res.get("files", []) if f["original_fs_id"] == file["original_fs_id"]), None)
                     if download_file_info and download_file_info.get("dlink"):
-                        download_file(download_file_info["dlink"], filename)
+                        await download_file(download_file_info["dlink"], filename)
                 continue
 
         elif action == "d":
             dlink = file.get("dlink")
             if dlink:
-                download_file(dlink, filename)
+                await download_file(dlink, filename)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nExiting...")

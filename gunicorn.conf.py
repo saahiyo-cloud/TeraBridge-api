@@ -32,10 +32,9 @@ def _int_env(name, default):
 # proxies (each holds a thread for the transfer duration).
 _default_workers = min((multiprocessing.cpu_count() * 2) + 1, 4)
 workers = _int_env("GUNICORN_WORKERS", _default_workers)
-threads = _int_env("GUNICORN_THREADS", 16)
 
-# gthread worker — see module docstring for why not gevent/eventlet.
-worker_class = "gthread"
+# Uvicorn worker class for running ASGI applications under Gunicorn
+worker_class = "uvicorn.workers.UvicornWorker"
 
 # ── Timeouts ─────────────────────────────────────────────────────────
 # 300s covers full-file downloads on slow links and the 120s transcode-

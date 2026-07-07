@@ -15,7 +15,7 @@ services:
     name: terabridge-api
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python api/index.py
+    startCommand: uvicorn api.index:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
       - key: PYTHON_VERSION

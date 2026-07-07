@@ -101,7 +101,13 @@ class TestMetrics:
 
 # ── HTTP Helpers ─────────────────────────────────────────────────────
 
+API_KEY_HEADER = None
+
 def make_request(session: requests.Session, method: str, url: str, **kwargs) -> RequestResult:
+    if API_KEY_HEADER:
+        if "headers" not in kwargs:
+            kwargs["headers"] = {}
+        kwargs["headers"]["X-API-Key"] = API_KEY_HEADER
     endpoint = url.split("?")[0].split("/")[-1] or "/"
     start = time.perf_counter()
     try:
@@ -333,11 +339,16 @@ def main():
     parser.add_argument("--scenarios", nargs="+", choices=list(SCENARIOS.keys()) + ["all"], default=["all"],
                         help="Which test scenarios to run (default: all)")
     parser.add_argument("--link", default=TEST_LINK, help="Terabox share link to test with")
+    parser.add_argument("--api-key", default="", help="API key to use in requests")
     args = parser.parse_args()
 
     # Update module-level test link if user provided a custom one
     if args.link != TEST_LINK:
         _update_test_link(args.link)
+
+    if args.api_key:
+        global API_KEY_HEADER
+        API_KEY_HEADER = args.api_key
 
     chosen = SCENARIOS if "all" in args.scenarios else {k: SCENARIOS[k] for k in args.scenarios}
 
