@@ -126,23 +126,25 @@ async def resolve_tokens_from_cookie(cookie_str):
     except Exception as e:
         raise Exception(f"Failed to resolve tokens from cookie: {str(e)}")
 
-async def delete_file_from_account(path_to_delete, bdstoken_val):
-    """Programmatically delete a file from the account to free up space."""
+async def delete_files_from_account(paths_to_delete, bdstoken_val):
+    """Programmatically delete a list of files from the account to free up space in a batch."""
+    if not paths_to_delete:
+        return True
     url = f"{BASE_API}/api/filemanager?opera=delete&async=0&{qp()}&bdstoken={bdstoken_val}"
     payload = {
-        "filelist": json.dumps([path_to_delete])
+        "filelist": json.dumps(paths_to_delete)
     }
     try:
         r = await session.post(url, data=payload)
         res = r.json()
         if res.get("errno") == 0:
-            print(f"[TeraBridge] Successfully deleted file to free up space: {path_to_delete}", flush=True)
+            print(f"[TeraBridge] Successfully deleted {len(paths_to_delete)} files in batch to free up space.", flush=True)
             return True
         else:
-            print(f"[TeraBridge][WARN] Deletion failed: errno {res.get('errno')} for {path_to_delete}", flush=True)
+            print(f"[TeraBridge][WARN] Batch deletion failed: errno {res.get('errno')} for {len(paths_to_delete)} files", flush=True)
             return False
     except Exception as e:
-        print(f"[TeraBridge][ERROR] Deletion request failed: {e}", flush=True)
+        print(f"[TeraBridge][ERROR] Batch deletion request failed: {e}", flush=True)
         return False
 
 async def prune_old_files_if_needed(existing_files, bdstoken_val, max_files=50):
@@ -159,12 +161,18 @@ async def prune_old_files_if_needed(existing_files, bdstoken_val, max_files=50):
     to_delete_count = len(existing_files) - max_files
     to_delete = sorted_items[:to_delete_count]
     
-    print(f"[TeraBridge] Pruning {to_delete_count} oldest files from account storage to stay within limits...", flush=True)
-    for name, f in to_delete:
-        path = f.get("path")
-        if path:
-            success = await delete_file_from_account(path, bdstoken_val)
-            if success:
+    # Batch paths into chunks of 100
+    paths = [f.get("path") for name, f in to_delete if f.get("path")]
+    chunk_size = 100
+    chunks = [paths[i:i + chunk_size] for i in range(0, len(paths), chunk_size)]
+    
+    print(f"[TeraBridge] Pruning {to_delete_count} oldest files from account storage in {len(chunks)} batch(es) to stay within limits...", flush=True)
+    for chunk in chunks:
+        success = await delete_files_from_account(chunk, bdstoken_val)
+        if success:
+            chunk_set = set(chunk)
+            to_remove = [name for name, f in existing_files.items() if f.get("path") in chunk_set]
+            for name in to_remove:
                 existing_files.pop(name, None)
 
 COOKIES_DICT = parse_cookies(COOKIE)
