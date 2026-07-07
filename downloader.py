@@ -126,6 +126,47 @@ async def resolve_tokens_from_cookie(cookie_str):
     except Exception as e:
         raise Exception(f"Failed to resolve tokens from cookie: {str(e)}")
 
+async def delete_file_from_account(path_to_delete, bdstoken_val):
+    """Programmatically delete a file from the account to free up space."""
+    url = f"{BASE_API}/api/filemanager?opera=delete&async=0&{qp()}&bdstoken={bdstoken_val}"
+    payload = {
+        "filelist": json.dumps([path_to_delete])
+    }
+    try:
+        r = await session.post(url, data=payload)
+        res = r.json()
+        if res.get("errno") == 0:
+            print(f"[TeraBridge] Successfully deleted file to free up space: {path_to_delete}", flush=True)
+            return True
+        else:
+            print(f"[TeraBridge][WARN] Deletion failed: errno {res.get('errno')} for {path_to_delete}", flush=True)
+            return False
+    except Exception as e:
+        print(f"[TeraBridge][ERROR] Deletion request failed: {e}", flush=True)
+        return False
+
+async def prune_old_files_if_needed(existing_files, bdstoken_val, max_files=50):
+    """
+    If the number of files in ROOT_PATH exceeds max_files, 
+    delete the oldest files to free up space.
+    Modifies existing_files in-place by removing deleted items.
+    """
+    if len(existing_files) <= max_files:
+        return
+    
+    # Sort files by their timestamp (oldest first)
+    sorted_items = sorted(existing_files.items(), key=lambda x: x[1].get("time", 0))
+    to_delete_count = len(existing_files) - max_files
+    to_delete = sorted_items[:to_delete_count]
+    
+    print(f"[TeraBridge] Pruning {to_delete_count} oldest files from account storage to stay within limits...", flush=True)
+    for name, f in to_delete:
+        path = f.get("path")
+        if path:
+            success = await delete_file_from_account(path, bdstoken_val)
+            if success:
+                existing_files.pop(name, None)
+
 COOKIES_DICT = parse_cookies(COOKIE)
 
 HEADERS = {
@@ -532,7 +573,7 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
         encoded_dir = urllib.parse.quote(ROOT_PATH)
         try:
             r_list = await session.get(
-                f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=100&bdstoken={BDSTOKEN}"
+                f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=1&showempty=0&page=1&num=1000&bdstoken={BDSTOKEN}"
             )
             list_res = r_list.json()
             if list_res.get("errno") == 0:
@@ -541,10 +582,13 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
                     existing_files[name] = {
                         "fs_id": str(entry.get("fs_id", "")),
                         "path": entry.get("path", ""),
-                        "size": int(entry.get("size", 0))
+                        "size": int(entry.get("size", 0)),
+                        "time": int(entry.get("server_mtime") or entry.get("ctime") or 0)
                     }
-        except Exception:
-            pass
+                # Keep at most 50 files per account to stay within storage limits
+                await prune_old_files_if_needed(existing_files, BDSTOKEN, max_files=50)
+        except Exception as e:
+            print(f"[Pruner][ERROR] Failed to list or prune account files: {e}", flush=True)
 
     # Run the file metadata/transfer checks in parallel using asyncio.gather
     tasks = [

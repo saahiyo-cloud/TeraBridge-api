@@ -745,6 +745,60 @@ async def stats(request: Request):
         "recent_auth_errors": _recent_auth_errors
     }
 
+async def resolve_link_with_retry(link, action="d", wait_for_transcoding=False, quality=None):
+    global _current_active_account_id
+    max_retries = 2
+    res = {}
+    
+    for attempt in range(max_retries):
+        active_id = _current_active_account_id
+        res = await resolve_link(link, action=action, wait_for_transcoding=wait_for_transcoding, quality=quality)
+        
+        # Identify account-level errors
+        is_account_error = False
+        reason = "unknown"
+        errno = res.get("errno")
+        error_msg = str(res.get("error", ""))
+        
+        if errno == -1:
+            is_account_error = True
+            reason = f"Token resolution failed: {error_msg}"
+        elif errno == -2:
+            is_account_error = True
+            reason = f"Share list query failed: {error_msg}"
+        elif errno in (-6, -9, 111):
+            is_account_error = True
+            reason = f"Session expired/invalid (errno {errno})"
+            
+        # Check files for storage full or auth errors
+        if not is_account_error and res.get("errno") == 0:
+            files = res.get("files", [])
+            if files:
+                account_failure_count = 0
+                for f in files:
+                    err_msg = str(f.get("error", ""))
+                    if "errno -6" in err_msg or "errno -9" in err_msg or "errno 111" in err_msg:
+                        account_failure_count += 1
+                        reason = "File transfer authentication failure"
+                    elif "errno -10" in err_msg or "errno 12" in err_msg:
+                        account_failure_count += 1
+                        reason = "Account storage limit reached (quota exceeded)"
+                if account_failure_count == len(files):
+                    is_account_error = True
+                    
+        if is_account_error and active_id:
+            print(f"[TeraBridge] Account '{active_id}' hit account-level failure: {reason}. Marking UNHEALTHY.", flush=True)
+            mark_account_unhealthy(active_id, reason)
+            # Rotate config
+            load_config_from_redis()
+            if attempt < max_retries - 1:
+                print(f"[TeraBridge] Retrying resolution using rotated account: {_current_active_account_id}", flush=True)
+                continue
+                
+        break
+        
+    return res
+
 # ─── Helper: Format resolve_link outputs to API proxy format ──────────
 def _format_resolved_response(request: Request, res, link):
     is_transcoding = any(f.get("error") == "transcoding_in_progress" for f in res.get("files", []))
@@ -946,7 +1000,7 @@ async def _background_transcode_poll(link, action, cache_key):
 
     print(f"[TranscoderWorker] Starting background transcoding checks for: {link}", flush=True)
     try:
-        res = await resolve_link(link, action=action, wait_for_transcoding=True)
+        res = await resolve_link_with_retry(link, action=action, wait_for_transcoding=True)
         if res.get("errno") == 0:
             # Fake a request to check user tier or just pass None
             response_data, is_transcoding = _format_resolved_response(None, res, link)
@@ -1048,7 +1102,7 @@ async def resolve(request: Request):
         acquire_resolve_lock(cache_key)
 
     try:
-        res = await resolve_link(link, action=action, wait_for_transcoding=wait_for_transcoding)
+        res = await resolve_link_with_retry(link, action=action, wait_for_transcoding=wait_for_transcoding)
         if res.get("errno") != 0:
             return JSONResponse({
                 "status": "error",
@@ -1146,7 +1200,7 @@ async def stream_manifest(request: Request):
                 print(f"[Manifest] Cache HIT for available qualities: {link} -> {list(ready_qualities.keys())}", flush=True)
             else:
                 print(f"[Manifest] Cache MISS for available qualities: {link}. Resolving...", flush=True)
-                res = await resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding)
+                res = await resolve_link_with_retry(link, action="s", wait_for_transcoding=wait_for_transcoding)
                 if res.get("errno") != 0:
                     return JSONResponse({"status": "error", "message": res.get("error", "Unknown resolution error occurred.")}, status_code=400)
 
@@ -1259,7 +1313,7 @@ async def stream_manifest(request: Request):
             return JSONResponse({"status": "error", "message": f"Unsupported stream quality: {quality}"}, status_code=400)
 
         import downloader
-        res = await resolve_link(link, action="s", wait_for_transcoding=wait_for_transcoding)
+        res = await resolve_link_with_retry(link, action="s", wait_for_transcoding=wait_for_transcoding)
         if res.get("errno") != 0:
             return JSONResponse({"status": "error", "message": res.get("error", "Failed to resolve link.")}, status_code=400)
 
@@ -1417,7 +1471,7 @@ async def stream_thumbnail(request: Request):
         cached_res = cache.get(share_url, "l", False)
         if not cached_res:
             try:
-                cached_res = await resolve_link(share_url, action="l")
+                cached_res = await resolve_link_with_retry(share_url, action="l")
                 if cached_res.get("errno") == 0:
                     cache.put(share_url, "l", False, cached_res)
             except Exception as e:
@@ -1494,7 +1548,7 @@ async def download_file_route(request: Request):
     cached_res = cache.get(share_url, "d", False)
     if not cached_res:
         try:
-            cached_res = await resolve_link(share_url, action="d")
+            cached_res = await resolve_link_with_retry(share_url, action="d")
             if cached_res.get("errno") == 0:
                 is_transcoding = any(f.get("error") == "transcoding_in_progress" for f in cached_res.get("files", []))
                 if not is_transcoding:
