@@ -1874,35 +1874,63 @@ async def cron_validate(request: Request):
     if not (is_master or is_cron_ok):
         return JSONResponse({"status": "error", "message": "Unauthorized: Invalid or missing cron secret or admin key."}, status_code=401)
 
-    active_cookie = None
-    active_id = None
+    accounts_checked = 0
+    accounts_invalidated = []
+    
     if redis_client:
         try:
+            raw_accounts = redis_client.hgetall(ACCOUNTS_HASH_KEY) or {}
+            for acc_id, raw_val in raw_accounts.items():
+                acc_id_str = acc_id.decode("utf-8") if isinstance(acc_id, bytes) else acc_id
+                creds = json.loads(raw_val)
+                
+                # We only check healthy accounts (no need to repeatedly check already unhealthy ones)
+                if creds.get("status", "healthy") == "healthy":
+                    cookie_val = creds.get("cookie")
+                    if cookie_val:
+                        accounts_checked += 1
+                        is_valid, msg = await validate_session_cookie(cookie_val)
+                        if not is_valid:
+                            mark_account_unhealthy(acc_id_str, reason=msg)
+                            accounts_invalidated.append((acc_id_str, msg))
+                            
+                            # Alert on Slack/Discord webhook
+                            alert_msg = (
+                                f"🚨 **TeraBox Account Expired!**\n"
+                                f"Account ID: `{acc_id_str}`\n"
+                                f"Reason: `{msg}`\n\n"
+                                f"Please refresh its cookie and update it at `/api/admin/config` immediately."
+                            )
+                            await send_webhook_alert(alert_msg)
+                            
+            # If the current active account got invalidated, force rotate immediately
             active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
             if isinstance(active_id, bytes):
                 active_id = active_id.decode("utf-8")
-            if active_id:
-                raw_creds = redis_client.hget(ACCOUNTS_HASH_KEY, active_id)
-                if raw_creds:
-                    creds = json.loads(raw_creds)
-                    active_cookie = creds.get("cookie")
+            if active_id and any(item[0] == active_id for item in accounts_invalidated):
+                get_next_healthy_account()
+                load_config_from_redis()
+                
         except Exception as e:
-            print(f"[TeraBridge][WARN] Failed to fetch cookie from Redis in cron: {e}", flush=True)
-    
-    if not active_id:
-        active_id = "default_env"
+            print(f"[TeraBridge][WARN] Failed to run cron accounts check: {e}", flush=True)
+            
+    else:
+        # Fallback to local default cookie if Redis is not configured
         from downloader import COOKIE
-        active_cookie = COOKIE
- 
-    if not active_cookie:
-        return JSONResponse({"status": "error", "message": "No active cookie found to validate."}, status_code=400)
- 
-    is_valid, msg = await validate_session_cookie(active_cookie)
-    
+        if COOKIE:
+            accounts_checked += 1
+            is_valid, msg = await validate_session_cookie(COOKIE)
+            if not is_valid:
+                accounts_invalidated.append(("default_env", msg))
+                alert_msg = f"🚨 **Default Env Cookie Expired!**\nReason: `{msg}`"
+                await send_webhook_alert(alert_msg)
+
+    # Write summary status to Redis status hash
     status_data = {
-        "cookie_valid": "true" if is_valid else "false",
         "last_checked": str(int(time.time())),
-        "message": msg
+        "checked_count": str(accounts_checked),
+        "invalidated_count": str(len(accounts_invalidated)),
+        "status": "healthy" if len(accounts_invalidated) == 0 else "degraded"
     }
     
     if redis_client:
@@ -1911,22 +1939,11 @@ async def cron_validate(request: Request):
         except Exception as e:
             print(f"[TeraBridge][WARN] Failed to write status to Redis in cron: {e}", flush=True)
 
-    if not is_valid:
-        alert_msg = (
-            f"Your TeraBox cookies have expired or are invalid!\n"
-            f"**Error/Reason:** `{msg}`\n\n"
-            f"Please refresh your cookies and update them at the dynamic configuration endpoint `/api/admin/config` immediately."
-        )
-        await send_webhook_alert(alert_msg)
-        return {
-            "status": "unhealthy",
-            "message": "Session cookies are expired or invalid. Webhook notification triggered.",
-            "error": msg
-        }
-
     return {
-        "status": "healthy",
-        "message": "Session cookies are valid."
+        "status": "success",
+        "checked_count": accounts_checked,
+        "invalidated_count": len(accounts_invalidated),
+        "invalidated_accounts": [acc[0] for acc in accounts_invalidated]
     }
 
 if __name__ == "__main__":
