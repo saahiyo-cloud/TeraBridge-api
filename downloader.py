@@ -116,9 +116,11 @@ def _create_session():
         allowed_methods=["GET", "POST"],
     )
     # Connection pooling: keep up to 10 connections, max 20 in the pool
+    pool_conn = int(os.environ.get("HTTP_POOL_CONNECTIONS", 50))
+    pool_max = int(os.environ.get("HTTP_POOL_MAXSIZE", 100))
     adapter = HTTPAdapter(
-        pool_connections=10,
-        pool_maxsize=20,
+        pool_connections=pool_conn,
+        pool_maxsize=pool_max,
         max_retries=retry_strategy,
     )
     s.mount("https://", adapter)

@@ -505,7 +505,7 @@ rate_limiter = RateLimiter(max_requests=RATE_LIMIT_RPM, window_seconds=RATE_LIMI
 # down) its own ThreadPoolExecutor(max_workers=4), which adds avoidable
 # per-request overhead. A single reusable pool amortizes that cost.
 _quality_probe_executor = concurrent.futures.ThreadPoolExecutor(
-    max_workers=8, thread_name_prefix="quality-probe"
+    max_workers=int(os.environ.get("QUALITY_PROBE_WORKERS", 32)), thread_name_prefix="quality-probe"
 )
 
 # Background cleanup every 5 minutes to prevent stale IP accumulation
@@ -2348,9 +2348,10 @@ if __name__ == "__main__":
         # On Linux/macOS, use Waitress for true production performance
         try:
             from waitress import serve
+            waitress_threads = int(os.environ.get("THREADS", 64))
             print(f"[TeraBridge] Starting Waitress production server on 0.0.0.0:{port}")
-            print(f"[TeraBridge] Threads: 8")
-            serve(app, host="0.0.0.0", port=port, threads=8)
+            print(f"[TeraBridge] Threads: {waitress_threads}")
+            serve(app, host="0.0.0.0", port=port, threads=waitress_threads)
         except ImportError:
             print(f"[TeraBridge] Waitress not found, using Flask threaded mode on port {port}")
             print(f"[TeraBridge] TIP: pip install waitress  (for better production performance)")
