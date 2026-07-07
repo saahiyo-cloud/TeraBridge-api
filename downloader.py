@@ -690,7 +690,7 @@ async def download_file(dlink, filename):
                 # Write chunks to file
                 with open(temp_filename, "wb") as f:
                     downloaded = 0
-                    async for chunk in dr.iter_bytes(1024 * 1024):
+                    async for chunk in dr.aiter_bytes(1024 * 1024):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)

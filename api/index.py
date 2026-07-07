@@ -1,5 +1,6 @@
 import sys
 import os
+import httpx
 import time
 import asyncio
 import threading
@@ -855,8 +856,6 @@ def _format_resolved_response(request: Request, res, link):
             "path": f.get("path"),
             "is_directory": f.get("is_directory")
         }
-        if f.get("stream_ready"):
-            file_info["stream_m3u8"] = f.get("stream_m3u8")
         response_data["files"].append(file_info)
         
     return response_data, is_transcoding
@@ -1438,7 +1437,7 @@ async def stream_segment(request: Request):
         
         async def generate():
             try:
-                async for chunk in req.iter_bytes(chunk_size=16384):
+                async for chunk in req.aiter_bytes(chunk_size=16384):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
@@ -1519,7 +1518,7 @@ async def stream_thumbnail(request: Request):
 
         async def generate():
             try:
-                async for chunk in req.iter_bytes(chunk_size=8192):
+                async for chunk in req.aiter_bytes(chunk_size=8192):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
@@ -1609,7 +1608,7 @@ async def download_file_route(request: Request):
 
         async def generate():
             try:
-                async for chunk in req.iter_bytes(chunk_size=131072):
+                async for chunk in req.aiter_bytes(chunk_size=131072):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
