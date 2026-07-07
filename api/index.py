@@ -26,7 +26,7 @@ try:
 except ImportError:
     pass
 
-from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie
+from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie
 from api.redis_client import redis_client
 from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY
 
@@ -1623,8 +1623,6 @@ def load_config_from_redis():
                 cookie=creds.get("cookie"),
                 js_token=creds.get("js_token"),
                 bds_token=creds.get("bds_token"),
-                sign=creds.get("sign"),
-                timestamp=creds.get("timestamp"),
                 logid=creds.get("logid")
             )
             print(f"[TeraBridge] Successfully synchronized active pool account: {active_id}", flush=True)
@@ -1652,14 +1650,44 @@ async def admin_config(request: Request):
             data = {}
         
         account_id = data.get("account_id") or _current_active_account_id or "account_1"
-        valid_keys = {"cookie", "js_token", "bds_token", "sign", "timestamp", "logid"}
-        updates = {k: v for k, v in data.items() if k in valid_keys and v is not None}
         
-        if not updates:
-            return JSONResponse({
-                "status": "error",
-                "message": "No valid configuration updates provided."
-            }, status_code=400)
+        # Support adding just the ndus token — auto-construct the full cookie
+        ndus_value = data.get("ndus")
+        if ndus_value and not data.get("cookie"):
+            data["cookie"] = f"ndus={ndus_value}; PANWEB=1"
+        
+        cookie_value = data.get("cookie")
+        
+        if not cookie_value:
+            # Check if there are other valid updates (for existing accounts)
+            valid_keys = {"cookie", "js_token", "bds_token", "logid"}
+            updates = {k: v for k, v in data.items() if k in valid_keys and v is not None}
+            if not updates:
+                return JSONResponse({
+                    "status": "error",
+                    "message": "No valid configuration updates provided. Provide at least 'ndus' or 'cookie'."
+                }, status_code=400)
+        else:
+            # We have a cookie — validate it and auto-resolve tokens
+            is_valid, validation_msg = await validate_session_cookie(cookie_value)
+            if not is_valid:
+                return JSONResponse({
+                    "status": "error",
+                    "message": f"Cookie validation failed: {validation_msg}. The ndus token may be expired or invalid."
+                }, status_code=400)
+            
+            # Auto-resolve bds_token, js_token, logid from TeraBox
+            try:
+                resolved_tokens = await resolve_tokens_from_cookie(cookie_value)
+                # Merge resolved tokens (don't override if user explicitly provided them)
+                for key in ("bds_token", "js_token", "logid"):
+                    if resolved_tokens.get(key) and not data.get(key):
+                        data[key] = resolved_tokens[key]
+            except Exception as e:
+                print(f"[TeraBridge][WARN] Auto-resolve tokens failed (cookie still saved): {e}", flush=True)
+        
+        valid_keys = {"cookie", "js_token", "bds_token", "logid"}
+        updates = {k: v for k, v in data.items() if k in valid_keys and v is not None}
 
         try:
             existing_raw = redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
@@ -1677,6 +1705,9 @@ async def admin_config(request: Request):
                 del account_data["unhealthy_reason"]
             if "unhealthy_at" in account_data:
                 del account_data["unhealthy_at"]
+            # Clean up legacy fields that are no longer used
+            for legacy_key in ("sign", "timestamp"):
+                account_data.pop(legacy_key, None)
 
             redis_client.hset(ACCOUNTS_HASH_KEY, account_id, json.dumps(account_data))
             
@@ -1690,7 +1721,8 @@ async def admin_config(request: Request):
             return {
                 "status": "success",
                 "message": f"Account '{account_id}' updated successfully in Redis pool.",
-                "updated_keys": list(updates.keys())
+                "updated_keys": list(updates.keys()),
+                "auto_resolved": [k for k in ("bds_token", "js_token", "logid") if k in updates and k not in (data.get("_user_provided_keys") or [])]
             }
         except Exception as e:
             return JSONResponse({
@@ -1720,7 +1752,7 @@ async def admin_config(request: Request):
             for acc_id, raw_val in raw_accounts.items():
                 try:
                     acc_data = json.loads(raw_val)
-                    masked = {k: mask_val(k, v) if k in ("cookie", "js_token", "bds_token", "sign", "timestamp", "logid") else v for k, v in acc_data.items()}
+                    masked = {k: mask_val(k, v) if k in ("cookie", "js_token", "bds_token", "logid") else v for k, v in acc_data.items()}
                     pool_summary[acc_id.decode("utf-8") if isinstance(acc_id, bytes) else acc_id] = masked
                 except Exception:
                     pass

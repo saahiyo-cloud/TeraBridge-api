@@ -25,8 +25,6 @@ BASE_API    = "https://dm.1024terabox.com"
 # Environment variables with hardcoded fallbacks
 JSTOKEN   = os.environ.get("TERABOX_JSTOKEN", "5D29BC1A0FACF3CEB3FD732DA7D673A0FD8AED8B4523E154A3C81F3703E40D5447EFC35BD4572A1A6364FD87651714FD6421FCD4C698998BEFFA5A318A8A07B2")
 BDSTOKEN  = os.environ.get("TERABOX_BDSTOKEN", "dc0d479a8da1268439f4ef3c78000af2")
-SIGN      = os.environ.get("TERABOX_SIGN", "BLhPnIgjr3XPA0yBJBbzPiJoxt2HPLGx4xzdkuc4DpwkO4p00xrA6Q%3D%3D")
-TIMESTAMP = os.environ.get("TERABOX_TIMESTAMP", "1781211335")
 LOGID     = os.environ.get("TERABOX_LOGID", "91617900647418900040")
 
 COOKIE = os.environ.get(
@@ -46,9 +44,9 @@ def parse_cookies(cookie_str):
             cookies[k.strip()] = v.strip()
     return cookies
 
-def update_credentials(cookie=None, js_token=None, bds_token=None, sign=None, timestamp=None, logid=None):
+def update_credentials(cookie=None, js_token=None, bds_token=None, logid=None):
     """Dynamically update Terabox global cookies and tokens in the session."""
-    global COOKIE, COOKIES_DICT, JSTOKEN, BDSTOKEN, SIGN, TIMESTAMP, LOGID, session
+    global COOKIE, COOKIES_DICT, JSTOKEN, BDSTOKEN, LOGID, session
     if cookie:
         COOKIE = cookie
         COOKIES_DICT.clear()
@@ -61,10 +59,6 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, sign=None, ti
         JSTOKEN = js_token
     if bds_token:
         BDSTOKEN = bds_token
-    if sign:
-        SIGN = sign
-    if timestamp:
-        TIMESTAMP = timestamp
     if logid:
         LOGID = logid
 
@@ -85,6 +79,52 @@ async def validate_session_cookie(cookie_str):
             return False, "bdstoken not found (session likely expired or invalid)"
     except Exception as e:
         return False, f"Request failed: {str(e)}"
+
+async def resolve_tokens_from_cookie(cookie_str):
+    """
+    Given a TeraBox cookie string, hit the /main page and auto-scrape
+    bds_token, js_token, and logid from the response.
+    Returns a dict with the resolved tokens, or raises an exception on failure.
+    """
+    temp_cookies = parse_cookies(cookie_str)
+    resolved = {}
+    
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, timeout=15.0) as temp_client:
+            r = await temp_client.get(f"{BASE_API}/main")
+            if r.status_code != 200:
+                raise Exception(f"TeraBox returned HTTP {r.status_code}")
+            
+            # Scrape bdstoken
+            m1 = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r.text, re.IGNORECASE)
+            if m1:
+                resolved["bds_token"] = m1[0]
+            else:
+                m2 = re.search(r'bdstoken\s*=\s*["\']([a-f0-9]{32})["\']', r.text)
+                if m2:
+                    resolved["bds_token"] = m2.group(1)
+            
+            # Scrape jstoken
+            m3 = re.findall(r'jstoken["\']?\s*[:=]\s*["\'](.*?)["\']', r.text, re.IGNORECASE)
+            if m3:
+                decoded_js = urllib.parse.unquote(m3[0])
+                arg_match = re.search(r'fn\s*\(\s*["\']([a-f0-9]{128})["\']\s*\)', decoded_js, re.IGNORECASE)
+                if arg_match:
+                    resolved["js_token"] = arg_match.group(1)
+            
+            # Extract logid from response cookies if available
+            for cookie_name, cookie_val in r.cookies.items():
+                if cookie_name.lower() == "logid":
+                    resolved["logid"] = cookie_val
+                    break
+            
+            if not resolved.get("bds_token"):
+                raise Exception("bdstoken not found — cookie is likely expired or invalid")
+            
+            print(f"[TeraBridge] Auto-resolved tokens: {list(resolved.keys())}", flush=True)
+            return resolved
+    except Exception as e:
+        raise Exception(f"Failed to resolve tokens from cookie: {str(e)}")
 
 COOKIES_DICT = parse_cookies(COOKIE)
 
