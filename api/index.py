@@ -12,9 +12,51 @@ import jwt
 import urllib.parse
 import re
 from collections import OrderedDict
+import logging
 
 # Add the project root directory to sys.path to resolve downloader module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ─── Query Parameter Truncating Filter for clean access logs ──────────
+class QueryParamTruncatingFilter(logging.Filter):
+    def filter(self, record):
+        if not record.args:
+            return True
+        try:
+            new_args = list(record.args)
+            modified = False
+            
+            # Case 1: Standard Uvicorn formatting with 5 arguments:
+            # (client_addr, method, path_with_query, http_version, status_code)
+            if len(new_args) >= 5:
+                path_with_query = new_args[2]
+                if isinstance(path_with_query, str) and len(path_with_query) > 150:
+                    parts = path_with_query.split("?", 1)
+                    if len(parts) > 1:
+                        path, query = parts
+                        truncated_query = query[:30] + "... [truncated]" if len(query) > 30 else query
+                        new_args[2] = f"{path}?{truncated_query}"
+                        modified = True
+            
+            # Case 2: Alternative/fallback logging format with 3 arguments:
+            # (client_addr, request_line, status_code)
+            elif len(new_args) >= 3:
+                request_line = new_args[1]
+                if isinstance(request_line, str) and len(request_line) > 150:
+                    parts = request_line.split("?", 1)
+                    if len(parts) > 1:
+                        path, query = parts
+                        truncated_query = query[:30] + "... [truncated]" if len(query) > 30 else query
+                        new_args[1] = f"{path}?{truncated_query}"
+                        modified = True
+            
+            if modified:
+                record.args = tuple(new_args)
+        except Exception:
+            pass
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(QueryParamTruncatingFilter())
 
 from fastapi import FastAPI, Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
@@ -416,6 +458,7 @@ async def _periodic_cleanup():
 # Startup background cleanup task
 @app.on_event("startup")
 async def startup_event():
+    logging.getLogger("uvicorn.access").addFilter(QueryParamTruncatingFilter())
     asyncio.create_task(_periodic_cleanup())
 
 # ─── Firebase ID Token Validation Helpers ────────────────────────────
