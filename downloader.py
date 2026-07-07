@@ -313,6 +313,29 @@ async def _process_single_file_metadata(item, share_id, uk, existing_files, acti
             file_res["transfer_status"] = "failed"
             return file_res
 
+        if transfer_res.get("errno") == 2:
+            # Target directory ROOT_PATH likely does not exist. Auto-create it and retry.
+            create_url = f"{BASE_API}/api/create?{qp()}&bdstoken={bdstoken_val}"
+            create_payload = {
+                "path": ROOT_PATH,
+                "isdir": "1",
+                "size": "0",
+                "block_list": "[]",
+                "method": "post"
+            }
+            try:
+                cr = await session.post(create_url, data=create_payload)
+                cr_res = cr.json()
+                if cr_res.get("errno") in (0, -8): # 0 = created, -8 = already exists
+                    # Retry transfer
+                    tr = await session.post(
+                        f"{BASE_API}/share/transfer?{qp()}&bdstoken={bdstoken_val}",
+                        data=transfer_payload
+                    )
+                    transfer_res = tr.json()
+            except Exception as e:
+                print(f"[TeraBridge][WARN] Failed to auto-create directory: {e}", flush=True)
+
         if transfer_res.get("errno") not in (0, 4):
             file_res["error"] = f"Transfer failed with Terabox errno {transfer_res.get('errno')}"
             file_res["transfer_status"] = "failed"
