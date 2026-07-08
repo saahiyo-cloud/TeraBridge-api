@@ -1334,7 +1334,10 @@ async def stream_manifest(request: Request):
                 ready_qualities = {}
 
                 async def check_streaming_quality(qname, qtype):
-                    url = f"{downloader.BASE_API}/api/streaming?{downloader.qp()}&path={encoded_path}&type={qtype}&bdstoken={downloader.BDSTOKEN}"
+                    url = (
+                        f"{downloader.BASE_API}/api/streaming?{downloader.qp()}&path={encoded_path}&type={qtype}"
+                        f"&bdstoken={downloader.BDSTOKEN}&isplayer=1&check_blue=1&clienttype=1&resolution={qname}"
+                    )
                     try:
                         sr = await downloader.session.get(url, timeout=15.0)
                         if sr.status_code == 200 and "#EXTM3U" in sr.text:
@@ -1428,7 +1431,10 @@ async def stream_manifest(request: Request):
         my_file_path = downloader.ROOT_PATH.rstrip("/") + "/" + filename
         encoded_path = urllib.parse.quote(my_file_path)
 
-        url = f"{downloader.BASE_API}/api/streaming?{downloader.qp()}&path={encoded_path}&type={qtype}&bdstoken={downloader.BDSTOKEN}"
+        url = (
+            f"{downloader.BASE_API}/api/streaming?{downloader.qp()}&path={encoded_path}&type={qtype}"
+            f"&bdstoken={downloader.BDSTOKEN}&isplayer=1&check_blue=1&clienttype=1&resolution={quality}"
+        )
         
         sr = await downloader.session.get(url, timeout=20.0)
         if sr.status_code != 200 or "#EXTM3U" not in sr.text:

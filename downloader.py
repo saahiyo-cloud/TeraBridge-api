@@ -29,10 +29,10 @@ LOGID     = os.environ.get("TERABOX_LOGID", "91617900647418900040")
 
 COOKIE = os.environ.get(
     "TERABOX_COOKIE",
-    "ndus=YdPTAX9peHuiF8hccqWybi55eQ8PxkBA39HlfmXM; PANWEB=1"
+    "ndus=YQ7FMLNpeHuiFnulqrnbJOzMCEEFsWvghsNdmyUB; PANWEB=1"
 )
 
-UA = "netdisk;2.2.51.6;netdisk;PC;PC-Windows;10.0.16299;netdisk"
+UA = "dubox;P2SP;2.2.91.249;dubox;4.2.0.1;I2404;android-android;16;JSbridge1.0.10;jointbridge;1.1.39;"
 ROOT_PATH = "/cloudvids"
 
 def parse_cookies(cookie_str):
@@ -430,6 +430,7 @@ async def _process_single_file_metadata(item, share_id, uk, existing_files, acti
 
     file_res["fs_id"] = my_fs_id
     file_res["filename"] = filename
+    file_res["path"] = my_file_path
     
     # --- ACTION HLS STREAMING ---
     is_video = False
@@ -450,7 +451,11 @@ async def _process_single_file_metadata(item, share_id, uk, existing_files, acti
         
         async def _try_stream(stype):
             """Try a single streaming request. Returns (success, errno, response_text)."""
-            url = f"{BASE_API}/api/streaming?{qp()}&path={encoded_path}&type={stype}&bdstoken={bdstoken_val}"
+            res_val = "1080p" if "1080" in stype else ("720p" if "720" in stype else ("480p" if "480" in stype else "360p"))
+            url = (
+                f"{BASE_API}/api/streaming?{qp()}&path={encoded_path}&type={stype}"
+                f"&bdstoken={bdstoken_val}&isplayer=1&check_blue=1&clienttype=1&resolution={res_val}"
+            )
             try:
                 sr = await session.get(url, timeout=20.0)
                 if sr.status_code == 200 and "#EXTM3U" in sr.text:
@@ -651,6 +656,37 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
                         r["dlink"] = dlink_map[my_fs_id]
                     elif action == "d":
                         r["error"] = "Failed to resolve direct download link (dlink) from batch filemetas."
+
+            # --- OPTIMIZE VIA LOCATEDOWNLOAD ---
+            # Resolve premium geographically-located CDN mirror links
+            async def upgrade_with_locate(r):
+                path = r.get("path")
+                if not path or r.get("is_directory") or r.get("error"):
+                    return
+                
+                encoded_path = urllib.parse.quote(path)
+                locate_url = (
+                    f"{BASE_API}/rest/2.0/pcs/file"
+                    f"?ant=1&app_id=250528&channel=0&check_blue=1&clienttype=17"
+                    f"&method=locatedownload&path={encoded_path}&vip=2"
+                )
+                try:
+                    # Request located mirrors with the same session cookies
+                    mr = await session.post(locate_url, content=" =", timeout=15.0)
+                    if mr.status_code == 200:
+                        urls = mr.json().get("urls", [])
+                        if urls:
+                            best_url = urls[0].get("url")
+                            if best_url:
+                                r["dlink"] = best_url
+                                # Keep reference to all mirrors for advanced tools if needed
+                                r["mirrors"] = [u.get("url") for u in urls]
+                except Exception:
+                    pass
+            
+            locate_tasks = [upgrade_with_locate(r) for r in results if r.get("path")]
+            if locate_tasks:
+                await asyncio.gather(*locate_tasks)
 
     return {
         "errno": 0,
