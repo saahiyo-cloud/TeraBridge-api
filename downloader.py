@@ -32,7 +32,7 @@ COOKIE = os.environ.get(
     "ndus=YdPTAX9peHuiF8hccqWybi55eQ8PxkBA39HlfmXM; PANWEB=1"
 )
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+UA = "netdisk;2.2.51.6;netdisk;PC;PC-Windows;10.0.16299;netdisk"
 ROOT_PATH = "/cloudvids"
 
 def parse_cookies(cookie_str):
@@ -198,7 +198,8 @@ def _create_session():
         headers=HEADERS,
         cookies=COOKIES_DICT,
         limits=limits,
-        timeout=httpx.Timeout(30.0)
+        timeout=httpx.Timeout(30.0),
+        http2=True
     )
     return s
 

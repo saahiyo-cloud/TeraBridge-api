@@ -1505,7 +1505,7 @@ async def stream_segment(request: Request):
     if REDIRECT_SEGMENTS:
         return RedirectResponse(url=target_url, status_code=307)
 
-    client = httpx.AsyncClient(timeout=30.0)
+    client = httpx.AsyncClient(timeout=30.0, http2=True)
     try:
         headers = {
             "User-Agent": UA,
@@ -1595,7 +1595,7 @@ async def stream_thumbnail(request: Request):
         if not (sig and verify_signature(url, "", "", sig, exp)) and not await check_auth(request):
             return Response(content="Unauthorized: Invalid signature or API key.", status_code=401)
 
-    client = httpx.AsyncClient(timeout=30.0)
+    client = httpx.AsyncClient(timeout=30.0, http2=True)
     try:
         req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, cookies=COOKIES_DICT)
         req = await req_ctx.__aenter__()
@@ -1672,7 +1672,7 @@ async def download_file_route(request: Request):
     if not dlink:
         return Response(content="Download link not available for this file", status_code=404)
 
-    client = httpx.AsyncClient(follow_redirects=True, timeout=120.0)
+    client = httpx.AsyncClient(follow_redirects=True, timeout=120.0, http2=True)
     try:
         headers = {
             "User-Agent": UA,
@@ -1725,7 +1725,7 @@ async def debug_curl(request: Request):
         return Response(content="Missing url", status_code=400)
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
             req = await client.get(url, headers={"User-Agent": UA}, cookies=COOKIES_DICT)
             try:
                 body = req.json()
