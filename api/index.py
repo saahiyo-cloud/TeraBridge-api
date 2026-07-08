@@ -106,39 +106,91 @@ def _cors_origin_for_request(request: Request):
         return "*"
     return None
 
-# Global CORS & Configuration Refresh Middleware
-@app.middleware("http")
-async def global_middleware(request: Request, call_next):
-    # Dynamic config refresh
-    if request.method != "OPTIONS":
-        global _last_config_check
-        now = time.time()
-        if now - _last_config_check > CONFIG_CHECK_INTERVAL:
-            load_config_from_redis()
-            _last_config_check = now
+# Global CORS & Configuration Refresh ASGI Middleware
+class CustomASGIMiddleware:
+    def __init__(self, app):
+        self.app = app
 
-    # Options preflight bypass
-    if request.method == "OPTIONS":
-        response = Response()
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+
+        # 1. Dynamic config refresh
+        if request.method != "OPTIONS":
+            global _last_config_check
+            now = time.time()
+            if now - _last_config_check > CONFIG_CHECK_INTERVAL:
+                load_config_from_redis()
+                _last_config_check = now
+
+        # 2. Options preflight bypass
+        if request.method == "OPTIONS":
+            allowed_origin = _cors_origin_for_request(request)
+            headers = [
+                (b"access-control-allow-headers", b"*"),
+                (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+                (b"access-control-expose-headers", b"*"),
+            ]
+            if allowed_origin:
+                headers.append((b"access-control-allow-origin", allowed_origin.encode()))
+                headers.append((b"vary", b"Origin"))
+
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": headers
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"",
+                "more_body": False
+            })
+            return
+
+        # 3. CORS origin header injection
         allowed_origin = _cors_origin_for_request(request)
-        if allowed_origin:
-            response.headers["Access-Control-Allow-Origin"] = allowed_origin
-            response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-        return response
 
-    response = await call_next(request)
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                
+                # Check and append CORS headers if they are not already set
+                has_origin = False
+                has_headers = False
+                has_methods = False
+                has_expose = False
+                
+                for h in headers:
+                    name = h[0].lower()
+                    if name == b"access-control-allow-origin":
+                        has_origin = True
+                    elif name == b"access-control-allow-headers":
+                        has_headers = True
+                    elif name == b"access-control-allow-methods":
+                        has_methods = True
+                    elif name == b"access-control-expose-headers":
+                        has_expose = True
+                
+                if not has_origin and allowed_origin:
+                    headers.append((b"access-control-allow-origin", allowed_origin.encode()))
+                    headers.append((b"vary", b"Origin"))
+                if not has_headers:
+                    headers.append((b"access-control-allow-headers", b"*"))
+                if not has_methods:
+                    headers.append((b"access-control-allow-methods", b"GET, POST, OPTIONS"))
+                if not has_expose:
+                    headers.append((b"access-control-expose-headers", b"*"))
+                
+                message["headers"] = headers
 
-    allowed_origin = _cors_origin_for_request(request)
-    if allowed_origin:
-        response.headers["Access-Control-Allow-Origin"] = allowed_origin
-        response.headers["Vary"] = "Origin"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Expose-Headers"] = "*"
-    return response
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+app.add_middleware(CustomASGIMiddleware)
 
 REDIRECT_SEGMENTS = os.environ.get("REDIRECT_SEGMENTS", "False").lower() in ("true", "1")
 
@@ -1392,7 +1444,7 @@ async def stream_manifest(request: Request):
                 continue
             if line.startswith("http://") or line.startswith("https://"):
                 signed = make_signed_params(request, line, "", "", kind="segment")
-                proxy_segment = f"{base_url}/api/stream/segment?url={urllib.parse.quote(line)}&{signed}"
+                proxy_segment = f"{base_url}/api/stream/segment.ts?url={urllib.parse.quote(line)}&{signed}"
                 rewritten.append(proxy_segment)
             else:
                 rewritten.append(line)
@@ -1403,6 +1455,7 @@ async def stream_manifest(request: Request):
         return JSONResponse({"status": "error", "message": f"Manifest proxy error: {str(e)}"}, status_code=500)
 
 @app.api_route("/api/stream/segment", methods=["GET", "OPTIONS"])
+@app.api_route("/api/stream/segment.ts", methods=["GET", "OPTIONS"])
 async def stream_segment(request: Request):
     url = request.query_params.get("url") or ""
     sig = request.query_params.get("sig") or ""
@@ -1977,7 +2030,7 @@ async def cron_validate(request: Request):
     
     if redis_client:
         try:
-            redis_client.hset("terabridge:status", mapping=status_data)
+            redis_client.hset("terabridge:status", values=status_data)
         except Exception as e:
             print(f"[TeraBridge][WARN] Failed to write status to Redis in cron: {e}", flush=True)
 
