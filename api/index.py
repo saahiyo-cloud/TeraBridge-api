@@ -69,7 +69,7 @@ try:
 except ImportError:
     pass
 
-from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie
+from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie, VIDEO_EXTS
 from api.redis_client import redis_client
 from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY
 
@@ -960,12 +960,9 @@ async def _prewarm_quality_cache(link, res):
 
     try:
         files = res.get("files", [])
-        VIDEO_EXTS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
-
         for file_index, f in enumerate(files):
             filename = f.get("filename", "")
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in VIDEO_EXTS:
+            if not (filename and filename.lower().endswith(VIDEO_EXTS)):
                 continue
 
             existing = cache.get(link, f"qualities:{file_index}", False)
@@ -1311,10 +1308,7 @@ async def stream_manifest(request: Request):
                     return JSONResponse({"status": "error", "message": "No streamable video files found in this share link."}, status_code=404)
 
                 filename = matching_file.get("filename")
-                is_video = False
-                if filename:
-                    ext = os.path.splitext(filename)[1].lower()
-                    is_video = ext in ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
+                is_video = bool(filename and filename.lower().endswith(VIDEO_EXTS))
 
                 if not is_video:
                     return JSONResponse({"status": "error", "message": "Selected file is not a streamable video."}, status_code=400)
@@ -1374,20 +1368,14 @@ async def stream_manifest(request: Request):
             base_url = _request_base_url(request)
             playlist = ["#EXTM3U", "#EXT-X-VERSION:3"]
             
-            bandwidth_map = {
-                "1080p": "4000000",
-                "720p":  "2500000",
-                "480p":  "1200000",
-                "360p":  "60000"
-            }
-            resolution_map = {
-                "1080p": "1920x1080",
-                "720p":  "1280x720",
-                "480p":  "854x480",
-                "360p":  "640x360"
-            }
+            qualities = [
+                ("1080p", "4000000", "1920x1080"),
+                ("720p",  "2500000", "1280x720"),
+                ("480p",  "1200000", "854x480"),
+                ("360p",  "60000",   "640x360")
+            ]
 
-            for qname in ("1080p", "720p", "480p", "360p"):
+            for qname, bandwidth, res_str in qualities:
                 if qname in ready_qualities:
                     q_fs_id = ready_qualities[qname]["fs_id"]
                     signed = make_signed_params(request, surl, q_fs_id, "manifest", kind="manifest")
@@ -1396,8 +1384,8 @@ async def stream_manifest(request: Request):
                         f"?surl={surl}&fs_id={q_fs_id}&quality={qname}&{signed}"
                     )
                     playlist.append(
-                        f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_map[qname]},"
-                        f"RESOLUTION={resolution_map[qname]}"
+                        f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},"
+                        f"RESOLUTION={res_str}"
                     )
                     playlist.append(stream_url)
 

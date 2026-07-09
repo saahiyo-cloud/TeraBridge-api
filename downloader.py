@@ -34,6 +34,7 @@ COOKIE = os.environ.get(
 
 UA = "dubox;P2SP;2.2.91.249;dubox;4.2.0.1;I2404;android-android;16;JSbridge1.0.10;jointbridge;1.1.39;"
 ROOT_PATH = "/cloudvids"
+VIDEO_EXTS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
 
 def parse_cookies(cookie_str):
     cookies = {}
@@ -433,10 +434,7 @@ async def _process_single_file_metadata(item, share_id, uk, existing_files, acti
     file_res["path"] = my_file_path
     
     # --- ACTION HLS STREAMING ---
-    is_video = False
-    if filename:
-        ext = os.path.splitext(filename)[1].lower()
-        is_video = ext in ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
+    is_video = bool(filename and filename.lower().endswith(VIDEO_EXTS))
 
     if action == "s" and is_video:
         if not my_file_path:
@@ -742,9 +740,7 @@ async def download_file(dlink, filename):
                     try:
                         def extract_zip():
                             with zipfile.ZipFile(temp_filename, "r") as zf:
-                                for info in zf.infolist():
-                                    zf.extract(info, ".")
-                                    print(f"   Saved: {info.filename}")
+                                zf.extractall(".")
                             os.remove(temp_filename)
                         await asyncio.to_thread(extract_zip)
                         print(f"✅ Extraction completed successfully!")
