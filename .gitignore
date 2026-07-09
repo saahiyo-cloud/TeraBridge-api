@@ -10,4 +10,4 @@ skills-lock.json
 .agents
 venv
 
-compare_speed.py
+speed_test_cookies.py
