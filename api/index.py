@@ -17,50 +17,12 @@ import logging
 # Add the project root directory to sys.path to resolve downloader module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ─── Query Parameter Truncating Filter for clean access logs ──────────
-class QueryParamTruncatingFilter(logging.Filter):
-    def filter(self, record):
-        if not record.args:
-            return True
-        try:
-            new_args = list(record.args)
-            modified = False
-            
-            # Case 1: Standard Uvicorn formatting with 5 arguments:
-            # (client_addr, method, path_with_query, http_version, status_code)
-            if len(new_args) >= 5:
-                path_with_query = new_args[2]
-                if isinstance(path_with_query, str) and len(path_with_query) > 150:
-                    parts = path_with_query.split("?", 1)
-                    if len(parts) > 1:
-                        path, query = parts
-                        truncated_query = query[:30] + "... [truncated]" if len(query) > 30 else query
-                        new_args[2] = f"{path}?{truncated_query}"
-                        modified = True
-            
-            # Case 2: Alternative/fallback logging format with 3 arguments:
-            # (client_addr, request_line, status_code)
-            elif len(new_args) >= 3:
-                request_line = new_args[1]
-                if isinstance(request_line, str) and len(request_line) > 150:
-                    parts = request_line.split("?", 1)
-                    if len(parts) > 1:
-                        path, query = parts
-                        truncated_query = query[:30] + "... [truncated]" if len(query) > 30 else query
-                        new_args[1] = f"{path}?{truncated_query}"
-                        modified = True
-            
-            if modified:
-                record.args = tuple(new_args)
-        except Exception:
-            pass
-        return True
 
-logging.getLogger("uvicorn.access").addFilter(QueryParamTruncatingFilter())
 
 from fastapi import FastAPI, Request, Response, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 
 # Load environment variables from .env file if present
 try:
@@ -106,91 +68,27 @@ def _cors_origin_for_request(request: Request):
         return "*"
     return None
 
-# Global CORS & Configuration Refresh ASGI Middleware
-class CustomASGIMiddleware:
-    def __init__(self, app):
-        self.app = app
+# CORS Middleware
+allow_origins = list(ALLOWED_ORIGINS) if ALLOWED_ORIGINS else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        request = Request(scope)
-
-        # 1. Dynamic config refresh
-        if request.method != "OPTIONS":
-            global _last_config_check
-            now = time.time()
-            if now - _last_config_check > CONFIG_CHECK_INTERVAL:
-                load_config_from_redis()
-                _last_config_check = now
-
-        # 2. Options preflight bypass
-        if request.method == "OPTIONS":
-            allowed_origin = _cors_origin_for_request(request)
-            headers = [
-                (b"access-control-allow-headers", b"*"),
-                (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
-                (b"access-control-expose-headers", b"*"),
-            ]
-            if allowed_origin:
-                headers.append((b"access-control-allow-origin", allowed_origin.encode()))
-                headers.append((b"vary", b"Origin"))
-
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": headers
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b"",
-                "more_body": False
-            })
-            return
-
-        # 3. CORS origin header injection
-        allowed_origin = _cors_origin_for_request(request)
-
-        async def send_wrapper(message):
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
-                
-                # Check and append CORS headers if they are not already set
-                has_origin = False
-                has_headers = False
-                has_methods = False
-                has_expose = False
-                
-                for h in headers:
-                    name = h[0].lower()
-                    if name == b"access-control-allow-origin":
-                        has_origin = True
-                    elif name == b"access-control-allow-headers":
-                        has_headers = True
-                    elif name == b"access-control-allow-methods":
-                        has_methods = True
-                    elif name == b"access-control-expose-headers":
-                        has_expose = True
-                
-                if not has_origin and allowed_origin:
-                    headers.append((b"access-control-allow-origin", allowed_origin.encode()))
-                    headers.append((b"vary", b"Origin"))
-                if not has_headers:
-                    headers.append((b"access-control-allow-headers", b"*"))
-                if not has_methods:
-                    headers.append((b"access-control-allow-methods", b"GET, POST, OPTIONS"))
-                if not has_expose:
-                    headers.append((b"access-control-expose-headers", b"*"))
-                
-                message["headers"] = headers
-
-            await send(message)
-
-        await self.app(scope, receive, send_wrapper)
-
-app.add_middleware(CustomASGIMiddleware)
+# Dynamic Configuration Refresh Middleware
+@app.middleware("http")
+async def config_refresh_middleware(request: Request, call_next):
+    if request.method != "OPTIONS":
+        global _last_config_check
+        now = time.time()
+        if now - _last_config_check > CONFIG_CHECK_INTERVAL:
+            load_config_from_redis()
+            _last_config_check = now
+    return await call_next(request)
 
 REDIRECT_SEGMENTS = os.environ.get("REDIRECT_SEGMENTS", "False").lower() in ("true", "1")
 
@@ -510,7 +408,6 @@ async def _periodic_cleanup():
 # Startup background cleanup task
 @app.on_event("startup")
 async def startup_event():
-    logging.getLogger("uvicorn.access").addFilter(QueryParamTruncatingFilter())
     asyncio.create_task(_periodic_cleanup())
 
 # ─── Firebase ID Token Validation Helpers ────────────────────────────
