@@ -45,13 +45,9 @@ class TestTeraBridgeAPI(unittest.TestCase):
     def make_request(self, method: str, path: str, **kwargs):
         """Helper to route request to TestClient or live server."""
         if TEST_BASE_URL:
-            import requests
-            # Translate follow_redirects to allow_redirects for requests
-            if "follow_redirects" in kwargs:
-                kwargs["allow_redirects"] = kwargs.pop("follow_redirects")
-            
+            import httpx
             url = f"{TEST_BASE_URL}{path}"
-            return requests.request(method, url, timeout=15, **kwargs)
+            return httpx.request(method, url, timeout=15, **kwargs)
         else:
             return self.client.request(method, path, **kwargs)
 

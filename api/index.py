@@ -587,31 +587,40 @@ async def verify_firebase_token(request: Request, token):
             _recent_auth_errors.pop(0)
         return False
 
-# ─── API Key Verification Helper ────────────────────────────────────
-async def check_auth(request: Request):
-    request.state.auth_type = None
+def _extract_api_key(request: Request, body_json=None, exclude_jwt=False):
     client_key = request.headers.get("X-API-Key")
-
     if not client_key:
         auth_header = request.headers.get("Authorization") or ""
         if auth_header.startswith("Bearer "):
             bearer_token = auth_header[len("Bearer "):].strip()
-            if bearer_token.count(".") == 2:
-                if await verify_firebase_token(request, bearer_token):
-                    request.state.auth_type = "firebase"
-                    return True
-            else:
+            if not (exclude_jwt and bearer_token.count(".") == 2):
                 client_key = bearer_token
 
     if not client_key:
         client_key = request.query_params.get("key") or request.query_params.get("api_key")
 
-    if not client_key and "application/json" in request.headers.get("content-type", ""):
+    if not client_key and body_json is not None:
+        client_key = body_json.get("key") or body_json.get("api_key")
+
+    return client_key
+
+async def check_auth(request: Request):
+    request.state.auth_type = None
+
+    body_json = None
+    if "application/json" in request.headers.get("content-type", ""):
         try:
-            body = await request.json()
-            client_key = body.get("key") or body.get("api_key")
+            body_json = await request.json()
         except Exception:
             pass
+
+    client_key = _extract_api_key(request, body_json)
+
+    if client_key and client_key.count(".") == 2:
+        if await verify_firebase_token(request, client_key):
+            request.state.auth_type = "firebase"
+            return True
+        return False
 
     if not client_key:
         if not API_KEY:
@@ -631,24 +640,14 @@ async def check_admin(request: Request):
     if not API_KEY:
         return False
 
-    client_key = request.headers.get("X-API-Key")
-
-    if not client_key:
-        auth_header = request.headers.get("Authorization") or ""
-        if auth_header.startswith("Bearer "):
-            bearer_token = auth_header[len("Bearer "):].strip()
-            if bearer_token.count(".") != 2:
-                client_key = bearer_token
-
-    if not client_key:
-        client_key = request.query_params.get("key") or request.query_params.get("api_key")
-
-    if not client_key and "application/json" in request.headers.get("content-type", ""):
+    body_json = None
+    if "application/json" in request.headers.get("content-type", ""):
         try:
-            body = await request.json()
-            client_key = body.get("key") or body.get("api_key")
+            body_json = await request.json()
         except Exception:
             pass
+
+    client_key = _extract_api_key(request, body_json, exclude_jwt=True)
 
     if not client_key:
         return False
@@ -722,9 +721,9 @@ def get_user_tier(request: Request = None):
     token = getattr(request.state, "firebase_token", None)
     if token:
         try:
-            import requests
             url = f"https://{FIREBASE_PROJECT_ID}-default-rtdb.asia-southeast1.firebasedatabase.app/users/{uid}/profile/tier.json?auth={token}"
-            r = requests.get(url, timeout=5)
+            with httpx.Client() as client:
+                r = client.get(url, timeout=5)
             if r.status_code == 200:
                 db_tier = r.json()
                 resolved_tier = "free"
@@ -1823,15 +1822,7 @@ async def admin_config(request: Request):
                     "message": "No valid configuration updates provided. Provide at least 'ndus' or 'cookie'."
                 }, status_code=400)
         else:
-            # We have a cookie — validate it and auto-resolve tokens
-            is_valid, validation_msg = await validate_session_cookie(cookie_value)
-            if not is_valid:
-                return JSONResponse({
-                    "status": "error",
-                    "message": f"Cookie validation failed: {validation_msg}. The ndus token may be expired or invalid."
-                }, status_code=400)
-            
-            # Auto-resolve bds_token, js_token, logid from TeraBox
+            # Validate session and resolve tokens in a single request to Terabox
             try:
                 resolved_tokens = await resolve_tokens_from_cookie(cookie_value)
                 # Merge resolved tokens (don't override if user explicitly provided them)
@@ -1839,7 +1830,10 @@ async def admin_config(request: Request):
                     if resolved_tokens.get(key) and not data.get(key):
                         data[key] = resolved_tokens[key]
             except Exception as e:
-                print(f"[TeraBridge][WARN] Auto-resolve tokens failed (cookie still saved): {e}", flush=True)
+                return JSONResponse({
+                    "status": "error",
+                    "message": f"Cookie validation or token resolution failed: {str(e)}"
+                }, status_code=400)
         
         valid_keys = {"cookie", "js_token", "bds_token", "logid"}
         updates = {k: v for k, v in data.items() if k in valid_keys and v is not None}

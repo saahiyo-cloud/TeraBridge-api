@@ -537,24 +537,25 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
     global BDSTOKEN, JSTOKEN
     
     # 1. Fetch current session tokens dynamically if needed
-    try:
-        r_main = await session.get(f"{BASE_API}/main", headers=HEADERS)
-        m1 = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r_main.text, re.IGNORECASE)
-        if m1:
-            BDSTOKEN = m1[0]
-        else:
-            m2 = re.search(r'bdstoken\s*=\s*["\']([a-f0-9]{32})["\']', r_main.text)
-            if m2:
-                BDSTOKEN = m2.group(1)
+    if not BDSTOKEN or not JSTOKEN:
+        try:
+            r_main = await session.get(f"{BASE_API}/main", headers=HEADERS)
+            m1 = re.findall(r'bdstoken["\']?\s*[:=]\s*["\']([a-f0-9]{32})["\']', r_main.text, re.IGNORECASE)
+            if m1:
+                BDSTOKEN = m1[0]
+            else:
+                m2 = re.search(r'bdstoken\s*=\s*["\']([a-f0-9]{32})["\']', r_main.text)
+                if m2:
+                    BDSTOKEN = m2.group(1)
 
-        m3 = re.findall(r'jstoken["\']?\s*[:=]\s*["\'](.*?)["\']', r_main.text, re.IGNORECASE)
-        if m3:
-            decoded_js = urllib.parse.unquote(m3[0])
-            arg_match = re.search(r'fn\s*\(\s*["\']([a-f0-9]{128})["\']\s*\)', decoded_js, re.IGNORECASE)
-            if arg_match:
-                JSTOKEN = arg_match.group(1)
-    except Exception as e:
-        return {"errno": -1, "error": f"Failed to resolve session tokens: {e}"}
+            m3 = re.findall(r'jstoken["\']?\s*[:=]\s*["\'](.*?)["\']', r_main.text, re.IGNORECASE)
+            if m3:
+                decoded_js = urllib.parse.unquote(m3[0])
+                arg_match = re.search(r'fn\s*\(\s*["\']([a-f0-9]{128})["\']\s*\)', decoded_js, re.IGNORECASE)
+                if arg_match:
+                    JSTOKEN = arg_match.group(1)
+        except Exception as e:
+            return {"errno": -1, "error": f"Failed to resolve session tokens: {e}"}
 
     try:
         surl = parse_surl(link)
