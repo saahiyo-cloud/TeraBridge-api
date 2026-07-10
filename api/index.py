@@ -781,10 +781,12 @@ async def resolve_link_with_retry(link, action="d", wait_for_transcoding=False, 
             reason = f"Session expired/invalid (errno {errno})"
             
         # Check files for storage full or auth errors
+        is_transient_rotation = False
         if not is_account_error and res.get("errno") == 0:
             files = res.get("files", [])
             if files:
                 account_failure_count = 0
+                transient_failure_count = 0
                 for f in files:
                     err_msg = str(f.get("error", ""))
                     if "errno -6" in err_msg or "errno -9" in err_msg or "errno 111" in err_msg:
@@ -793,13 +795,26 @@ async def resolve_link_with_retry(link, action="d", wait_for_transcoding=False, 
                     elif "errno -10" in err_msg or "errno 12" in err_msg:
                         account_failure_count += 1
                         reason = "Account storage limit reached (quota exceeded)"
+                    elif "400810" in err_msg:
+                        transient_failure_count += 1
+                        reason = "Temporary transfer rate-limit or restriction (errno 400810)"
                 if account_failure_count == len(files):
                     is_account_error = True
+                elif transient_failure_count == len(files):
+                    is_transient_rotation = True
                     
         if is_account_error and active_id:
             print(f"[TeraBridge] Account '{active_id}' hit account-level failure: {reason}. Marking UNHEALTHY.", flush=True)
             mark_account_unhealthy(active_id, reason)
             # Rotate config
+            load_config_from_redis()
+            if attempt < max_retries - 1:
+                print(f"[TeraBridge] Retrying resolution using rotated account: {_current_active_account_id}", flush=True)
+                continue
+        elif is_transient_rotation and active_id:
+            print(f"[TeraBridge] Account '{active_id}' hit transient limit: {reason}. Rotating to another healthy account...", flush=True)
+            # Force rotation to next healthy account in pool
+            get_next_healthy_account()
             load_config_from_redis()
             if attempt < max_retries - 1:
                 print(f"[TeraBridge] Retrying resolution using rotated account: {_current_active_account_id}", flush=True)
