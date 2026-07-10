@@ -211,7 +211,6 @@ class ResponseCache:
     def __init__(self, max_entries=256, ttl_seconds=60, redis_client=None):
         self.redis_client = redis_client
         self._store = OrderedDict()
-        self._lock = asyncio.Lock()
         self._max = max_entries
         self._ttl = ttl_seconds
         self.hits = 0
@@ -312,7 +311,6 @@ class RateLimiter:
     def __init__(self, max_requests=30, window_seconds=60, redis_client=None):
         self.redis_client = redis_client
         self._requests = {}
-        self._lock = asyncio.Lock()
         self._max = max_requests
         self._window = window_seconds
         self.total_blocked = 0
@@ -423,10 +421,27 @@ async def _periodic_cleanup():
         await asyncio.sleep(300)
         rate_limiter.cleanup()
 
-# Startup background cleanup task
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(_periodic_cleanup())
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup background cleanup task
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
+    yield
+    # Shutdown logic: cancel cleanup task and close global clients
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Close global HTTP clients cleanly to prevent resource leaks/warnings
+    await _proxy_client.aclose()
+    await session.aclose()
+    if redis_client:
+        redis_client.close()
+
+app.router.lifespan_context = lifespan
 
 # ─── Firebase ID Token Validation Helpers ────────────────────────────
 FIREBASE_PROJECT_ID = os.environ.get("VITE_FIREBASE_PROJECT_ID") or os.environ.get("FIREBASE_PROJECT_ID") or "teraplay-project"
