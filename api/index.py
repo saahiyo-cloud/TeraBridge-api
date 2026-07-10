@@ -40,6 +40,16 @@ app = FastAPI(title="TeraBridge API", version="2.0.0")
 # Gzip Compression Middleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+# Shared httpx client for proxy endpoints (download, segment, thumbnail).
+# Reusing a single client gives us persistent connection pooling, HTTP/2
+# multiplexing, and eliminates per-request TCP/TLS handshake overhead.
+_proxy_client = httpx.AsyncClient(
+    follow_redirects=True,
+    timeout=120.0,
+    http2=True,
+    limits=httpx.Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=90),
+)
+
 # ─── Configuration ───────────────────────────────────────────────────
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL", 60))         # Cache responses for 60s
 CACHE_MAX_ENTRIES = int(os.environ.get("CACHE_MAX_ENTRIES", 256)) # LRU eviction after 256 entries
@@ -1395,7 +1405,7 @@ async def stream_segment(request: Request):
     if REDIRECT_SEGMENTS:
         return RedirectResponse(url=target_url, status_code=307)
 
-    client = httpx.AsyncClient(timeout=30.0, http2=True)
+    client = _proxy_client
     try:
         headers = {
             "User-Agent": UA,
@@ -1405,7 +1415,7 @@ async def stream_segment(request: Request):
         if range_header:
             headers["Range"] = range_header
 
-        req_ctx = client.stream("GET", target_url, headers=headers, cookies=COOKIES_DICT)
+        req_ctx = client.stream("GET", target_url, headers=headers, cookies=COOKIES_DICT, timeout=30.0)
         req = await req_ctx.__aenter__()
         
         resp_headers = {}
@@ -1423,16 +1433,14 @@ async def stream_segment(request: Request):
         
         async def generate():
             try:
-                async for chunk in req.aiter_bytes(chunk_size=16384):
+                async for chunk in req.aiter_bytes(chunk_size=65536):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
-                await client.aclose()
 
         return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
 
     except Exception as e:
-        await client.aclose()
         return Response(content=f"Segment proxy encountered an error: {str(e)}", status_code=500)
 
 @app.api_route("/api/thumbnail", methods=["GET", "OPTIONS"])
@@ -1485,9 +1493,9 @@ async def stream_thumbnail(request: Request):
         if not (sig and verify_signature(url, "", "", sig, exp)) and not await check_auth(request):
             return Response(content="Unauthorized: Invalid signature or API key.", status_code=401)
 
-    client = httpx.AsyncClient(timeout=30.0, http2=True)
+    client = _proxy_client
     try:
-        req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, cookies=COOKIES_DICT)
+        req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, cookies=COOKIES_DICT, timeout=30.0)
         req = await req_ctx.__aenter__()
 
         resp_headers = {}
@@ -1504,16 +1512,14 @@ async def stream_thumbnail(request: Request):
 
         async def generate():
             try:
-                async for chunk in req.aiter_bytes(chunk_size=8192):
+                async for chunk in req.aiter_bytes(chunk_size=32768):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
-                await client.aclose()
 
         return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
 
     except Exception as e:
-        await client.aclose()
         return Response(content=f"Thumbnail proxy encountered an error: {str(e)}", status_code=500)
 
 @app.api_route("/api/download", methods=["GET", "OPTIONS"])
@@ -1562,7 +1568,7 @@ async def download_file_route(request: Request):
     if not dlink:
         return Response(content="Download link not available for this file", status_code=404)
 
-    client = httpx.AsyncClient(follow_redirects=True, timeout=120.0, http2=True)
+    client = _proxy_client
     try:
         headers = {
             "User-Agent": UA,
@@ -1572,7 +1578,7 @@ async def download_file_route(request: Request):
         if range_header:
             headers["Range"] = range_header
 
-        req_ctx = client.stream("GET", dlink, headers=headers, cookies=COOKIES_DICT)
+        req_ctx = client.stream("GET", dlink, headers=headers, cookies=COOKIES_DICT, timeout=120.0)
         req = await req_ctx.__aenter__()
 
         resp_headers = {}
@@ -1594,16 +1600,14 @@ async def download_file_route(request: Request):
 
         async def generate():
             try:
-                async for chunk in req.aiter_bytes(chunk_size=131072):
+                async for chunk in req.aiter_bytes(chunk_size=524288):
                     yield chunk
             finally:
                 await req_ctx.__aexit__(None, None, None)
-                await client.aclose()
 
         return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
 
     except Exception as e:
-        await client.aclose()
         return Response(content=f"Download proxy encountered an error: {str(e)}", status_code=500)
 
 @app.get("/api/debug_curl")
