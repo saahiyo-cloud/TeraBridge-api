@@ -757,7 +757,14 @@ async def stats(request: Request):
 
 async def resolve_link_with_retry(link, action="d", wait_for_transcoding=False, quality=None):
     global _current_active_account_id
-    max_retries = 2
+    max_retries = 3
+    if redis_client:
+        try:
+            accounts = get_all_accounts()
+            healthy_count = sum(1 for data in accounts.values() if data.get("status", "healthy") == "healthy")
+            max_retries = max(3, healthy_count)
+        except Exception:
+            pass
     res = {}
     
     for attempt in range(max_retries):
