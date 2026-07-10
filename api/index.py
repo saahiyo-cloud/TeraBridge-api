@@ -89,16 +89,24 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Dynamic Configuration Refresh Middleware
-@app.middleware("http")
-async def config_refresh_middleware(request: Request, call_next):
-    if request.method != "OPTIONS":
-        global _last_config_check
-        now = time.time()
-        if now - _last_config_check > CONFIG_CHECK_INTERVAL:
-            load_config_from_redis()
-            _last_config_check = now
-    return await call_next(request)
+# Dynamic Configuration Refresh Middleware variables
+_last_config_check = 0
+CONFIG_CHECK_INTERVAL = 60
+
+class ConfigRefreshMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] != "OPTIONS":
+            global _last_config_check
+            now = time.time()
+            if now - _last_config_check > CONFIG_CHECK_INTERVAL:
+                load_config_from_redis()
+                _last_config_check = now
+        await self.app(scope, receive, send)
+
+app.add_middleware(ConfigRefreshMiddleware)
 
 REDIRECT_SEGMENTS = os.environ.get("REDIRECT_SEGMENTS", "False").lower() in ("true", "1")
 
@@ -1634,8 +1642,6 @@ async def debug_curl(request: Request):
         return Response(content=str(e), status_code=500)
 
 # ─── Dynamic Config Sync ─────────────────────────────────────────────
-_last_config_check = 0
-CONFIG_CHECK_INTERVAL = 60
 _current_active_account_id = None
 
 def load_config_from_redis():
