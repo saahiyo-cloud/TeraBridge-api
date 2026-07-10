@@ -33,7 +33,7 @@ except ImportError:
 
 from downloader import resolve_link, session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie, VIDEO_EXTS
 from api.redis_client import redis_client
-from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY
+from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY, get_all_accounts
 
 app = FastAPI(title="TeraBridge API", version="2.0.0")
 

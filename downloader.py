@@ -359,6 +359,15 @@ async def _process_single_file_metadata(item, share_id, uk, existing_files, acti
                 data=transfer_payload
             )
             transfer_res = tr.json()
+            # If rate-limited/transient check (400810), sleep 1.5s and retry once
+            if transfer_res.get("errno") == 400810:
+                print(f"[TeraBridge] Transfer returned 400810. Retrying in 1.5s...", flush=True)
+                await asyncio.sleep(1.5)
+                tr = await session.post(
+                    f"{BASE_API}/share/transfer?{qp()}&bdstoken={bdstoken_val}",
+                    data=transfer_payload
+                )
+                transfer_res = tr.json()
         except Exception as e:
             file_res["error"] = f"Transfer API request failed: {e}"
             file_res["transfer_status"] = "failed"
