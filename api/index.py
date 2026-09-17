@@ -48,11 +48,76 @@ app = FastAPI(title="TeraBridge API", version="2.0.0")
 # Gzip Compression Middleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
+# ─── Allowed Outbound Stream & Proxy Suffixes ───────────────────────
+ALLOWED_STREAM_SUFFIXES = (
+    ".1024terabox.com", ".terabox.com", ".teraboxapp.com", ".terabox.app", ".baidu.com",
+    ".freeterabox.com", ".nephobox.com", ".momerybox.com", ".mirrobox.com", ".gibibox.com",
+    ".tibibox.com", ".4funbox.com", ".1024tera.com", ".1024nephobox.com", ".terabox.fun",
+    ".terasharefile.com", ".teraboxlink.com", ".teraboxshare.com",
+    ".1024terabox.com-videotran-hybcloud", ".terabox.com-videotran-hybcloud",
+    ".teraboxapp.com-videotran-hybcloud", ".terabox.app-videotran-hybcloud",
+    ".freeterabox.com-videotran-hybcloud", ".nephobox.com-videotran-hybcloud",
+    ".momerybox.com-videotran-hybcloud", ".mirrobox.com-videotran-hybcloud",
+    ".gibibox.com-videotran-hybcloud", ".teraboxshare.com-videotran-hybcloud",
+    ".tibibox.com-videotran-hybcloud", ".4funbox.com-videotran-hybcloud",
+    ".1024tera.com-videotran-hybcloud", ".1024nephobox.com-videotran-hybcloud",
+    ".terabox.fun-videotran-hybcloud", ".terasharefile.com-videotran-hybcloud",
+    ".teraboxlink.com-videotran-hybcloud",
+    ".koofr.net", ".koofr.eu", "pcs.baidu.com", "d.pcs.1024terabox.com",
+)
+
+def _is_allowed_stream_host(host: str) -> bool:
+    if not host:
+        return False
+    host = host.lower()
+    for suffix in ALLOWED_STREAM_SUFFIXES:
+        if suffix.startswith("."):
+            if host == suffix[1:] or host.endswith(suffix):
+                return True
+        elif host == suffix:
+            return True
+    return False
+
+def _is_private_or_local_host(hostname: str) -> bool:
+    if not hostname:
+        return True
+    hostname = hostname.lower()
+    if hostname in ("localhost", "127.0.0.1", "::1", "metadata.google.internal") or hostname.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return True
+    except ValueError:
+        pass
+    return False
+
+def _validate_safe_outbound_url(target_url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname or _is_private_or_local_host(hostname):
+            return False
+        return _is_allowed_stream_host(hostname)
+    except Exception:
+        return False
+
+async def _check_safe_redirect(response: httpx.Response):
+    if response.is_redirect and "location" in response.headers:
+        loc = response.headers["location"]
+        if loc.startswith("http://") or loc.startswith("https://"):
+            if not _validate_safe_outbound_url(loc):
+                logger.warning("[SSRF] Prohibited redirect destination blocked: %s", loc)
+                raise HTTPException(status_code=403, detail="Redirect to untrusted destination blocked.")
+
 # Shared httpx client for proxy endpoints (download, segment, thumbnail).
 # Reusing a single client gives us persistent connection pooling, HTTP/2
 # multiplexing, and eliminates per-request TCP/TLS handshake overhead.
 _proxy_client = httpx.AsyncClient(
     follow_redirects=True,
+    event_hooks={"response": [_check_safe_redirect]},
     timeout=120.0,
     http2=True,
     limits=httpx.Limits(max_connections=200, max_keepalive_connections=50, keepalive_expiry=90),
@@ -190,7 +255,7 @@ def _resolve_client_ip(request: Request):
         return str(peer)
 
     if ON_RENDER or (not TRUSTED_PROXY_CIDRS and any(peer in c for c in _LOOPBACK_CIDRS)):
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()
 
     chain = [h.strip() for h in xff.split(",") if h.strip()]
     candidate = str(peer)
@@ -513,13 +578,10 @@ async def verify_firebase_token(request: Request, token):
         request.state.user = decoded
         return True
     except Exception as e:
-        import traceback
-        err_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error("[Auth] Firebase JWT verification failed: %s", err_msg)
+        logger.error("[Auth] Firebase JWT verification failed: %s", e)
         _recent_auth_errors.append({
             "timestamp": time.time(),
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "error": str(e)
         })
         if len(_recent_auth_errors) > 10:
             _recent_auth_errors.pop(0)
@@ -557,6 +619,8 @@ async def check_auth(request: Request):
     if client_key and client_key.count(".") == 2:
         if await verify_firebase_token(request, client_key):
             request.state.auth_type = "firebase"
+            request.state.firebase_token = client_key
+            await resolve_and_cache_user_tier_async(request, client_key)
             return True
         return False
 
@@ -613,6 +677,51 @@ _user_tier_cache = {}
 _user_tier_cache_lock = threading.Lock()
 USER_TIER_CACHE_TTL = 300
 
+async def resolve_and_cache_user_tier_async(request: Request, token: str):
+    """Asynchronously fetch and cache user tier to prevent event loop blocking."""
+    user = getattr(request.state, "user", None) or {}
+    uid = user.get("user_id") or user.get("sub")
+    if not uid or not FIREBASE_PROJECT_ID:
+        return
+    now = time.time()
+    with _user_tier_cache_lock:
+        if uid in _user_tier_cache:
+            _, expiry = _user_tier_cache[uid]
+            if now < expiry:
+                return
+    if redis_client:
+        try:
+            cached_tier = redis_client.get(f"user:tier:{uid}")
+            if cached_tier:
+                if isinstance(cached_tier, bytes):
+                    cached_tier = cached_tier.decode('utf-8')
+                with _user_tier_cache_lock:
+                    _user_tier_cache[uid] = (cached_tier, now + USER_TIER_CACHE_TTL)
+                return
+        except Exception:
+            pass
+
+    try:
+        url = f"https://{FIREBASE_PROJECT_ID}-default-rtdb.asia-southeast1.firebasedatabase.app/users/{uid}/profile/tier.json?auth={token}"
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(url)
+        if r.status_code == 200:
+            db_tier = r.json()
+            resolved_tier = "free"
+            if db_tier:
+                tier_str = str(db_tier).lower()
+                if "premium" in tier_str or "pro" in tier_str:
+                    resolved_tier = "premium"
+            with _user_tier_cache_lock:
+                _user_tier_cache[uid] = (resolved_tier, now + USER_TIER_CACHE_TTL)
+            if redis_client:
+                try:
+                    redis_client.set(f"user:tier:{uid}", resolved_tier, ex=USER_TIER_CACHE_TTL)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("Async Firebase user tier fetch failed: %s", e)
+
 def get_user_tier(request: Request = None):
     if not request:
         return "free"
@@ -655,34 +764,6 @@ def get_user_tier(request: Request = None):
                 return cached_tier
         except Exception as e:
             logger.warning("Redis user tier cache get error: %s", e)
-
-    token = getattr(request.state, "firebase_token", None)
-    if token:
-        try:
-            url = f"https://{FIREBASE_PROJECT_ID}-default-rtdb.asia-southeast1.firebasedatabase.app/users/{uid}/profile/tier.json?auth={token}"
-            with httpx.Client() as client:
-                r = client.get(url, timeout=5)
-            if r.status_code == 200:
-                db_tier = r.json()
-                resolved_tier = "free"
-                if db_tier:
-                    tier_str = str(db_tier).lower()
-                    if "premium" in tier_str or "pro" in tier_str:
-                        resolved_tier = "premium"
-
-                with _user_tier_cache_lock:
-                    _user_tier_cache[uid] = (resolved_tier, now + USER_TIER_CACHE_TTL)
-
-                if redis_client:
-                    try:
-                        redis_key = f"user:tier:{uid}"
-                        redis_client.set(redis_key, resolved_tier, ex=USER_TIER_CACHE_TTL)
-                    except Exception as e:
-                        logger.warning("Redis user tier cache set error: %s", e)
-
-                return resolved_tier
-        except Exception as e:
-            logger.warning("Failed to fetch user tier from Firebase DB: %s", e)
 
     return "free"
 
@@ -1424,38 +1505,8 @@ async def stream_segment(request: Request):
         return JSONResponse({"status": "error", "message": "Unauthorized: Invalid signature or API key."}, status_code=401)
 
     # SSRF Protection
-    try:
-        parsed = urllib.parse.urlparse(target_url)
-        if parsed.scheme not in ("http", "https"):
-            return JSONResponse({"status": "error", "message": "Forbidden: Unsupported URL scheme."}, status_code=403)
-        domain = parsed.hostname.lower() if parsed.hostname else ""
-        allowed_suffixes = (
-            ".1024terabox.com", ".terabox.com", ".teraboxapp.com", ".terabox.app", ".baidu.com",
-            ".freeterabox.com", ".nephobox.com", ".momerybox.com", ".mirrobox.com", ".gibibox.com",
-            ".tibibox.com", ".4funbox.com", ".1024tera.com", ".1024nephobox.com", ".terabox.fun",
-            ".terasharefile.com", ".teraboxlink.com", ".teraboxshare.com",
-            ".1024terabox.com-videotran-hybcloud", ".terabox.com-videotran-hybcloud",
-            ".teraboxapp.com-videotran-hybcloud", ".terabox.app-videotran-hybcloud",
-            ".freeterabox.com-videotran-hybcloud", ".nephobox.com-videotran-hybcloud",
-            ".momerybox.com-videotran-hybcloud", ".mirrobox.com-videotran-hybcloud",
-            ".gibibox.com-videotran-hybcloud", ".teraboxshare.com-videotran-hybcloud",
-            ".tibibox.com-videotran-hybcloud", ".4funbox.com-videotran-hybcloud",
-            ".1024tera.com-videotran-hybcloud", ".1024nephobox.com-videotran-hybcloud",
-            ".terabox.fun-videotran-hybcloud", ".terasharefile.com-videotran-hybcloud",
-            ".teraboxlink.com-videotran-hybcloud",
-            ".koofr.net", ".koofr.eu", "pcs.baidu.com", "d.pcs.1024terabox.com",
-        )
-
-        def _host_allowed(host, suffix):
-            if suffix.startswith("."):
-                return host == suffix[1:] or host.endswith(suffix)
-            return host == suffix
-
-        is_allowed = any(_host_allowed(domain, suffix) for suffix in allowed_suffixes)
-        if not is_allowed:
-            return JSONResponse({"status": "error", "message": "Forbidden: Invalid stream host destination."}, status_code=403)
-    except Exception:
-        return JSONResponse({"status": "error", "message": "Invalid segment URL format."}, status_code=400)
+    if not _validate_safe_outbound_url(target_url):
+        return JSONResponse({"status": "error", "message": "Forbidden: Invalid stream host destination."}, status_code=403)
 
     if REDIRECT_SEGMENTS:
         return RedirectResponse(url=target_url, status_code=307)
@@ -1548,9 +1599,12 @@ async def stream_thumbnail(request: Request):
         if not (sig and verify_signature(url, "", "", sig, exp)) and not await check_auth(request):
             return JSONResponse({"status": "error", "message": "Unauthorized: Invalid signature or API key."}, status_code=401)
 
+        if not _validate_safe_outbound_url(url):
+            return JSONResponse({"status": "error", "message": "Forbidden: Invalid thumbnail host destination."}, status_code=403)
+
     client = _proxy_client
     try:
-        req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, cookies=COOKIES_DICT, timeout=30.0)
+        req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, timeout=30.0)
         req = await req_ctx.__aenter__()
 
         resp_headers = {}
@@ -1672,10 +1726,17 @@ async def debug_curl(request: Request):
     url = request.query_params.get("url")
     if not url:
         return JSONResponse({"status": "error", "message": "Missing required parameter 'url'."}, status_code=400)
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return JSONResponse({"status": "error", "message": "Forbidden: Unsupported URL scheme."}, status_code=403)
+    hostname = parsed.hostname or ""
+    if _is_private_or_local_host(hostname):
+        return JSONResponse({"status": "error", "message": "Forbidden: Private or loopback destination is not permitted."}, status_code=403)
+    request_cookies = COOKIES_DICT if _is_allowed_stream_host(hostname) else None
     try:
         import httpx
         async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
-            req = await client.get(url, headers={"User-Agent": UA}, cookies=COOKIES_DICT)
+            req = await client.get(url, headers={"User-Agent": UA}, cookies=request_cookies)
             try:
                 body = req.json()
             except Exception:

@@ -269,5 +269,27 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(data.get("status"), "success")
         self.assertIn("checked_count", data)
 
+    # 32. SSRF Protection - /api/thumbnail rejects private and untrusted hosts
+    def test_32_ssrf_thumbnail_rejected_for_untrusted_host(self):
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/thumbnail?url=http://169.254.169.254/latest/meta-data", headers=headers)
+        self.assertEqual(resp.status_code, 403)
+        resp2 = self.make_request("GET", "/api/thumbnail?url=https://attacker-controlled-site.com/avatar.jpg", headers=headers)
+        self.assertEqual(resp2.status_code, 403)
+
+    # 33. SSRF Protection - /api/debug_curl rejects loopback & private networks
+    def test_33_ssrf_debug_curl_rejected_for_private_ip(self):
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/debug_curl?url=http://127.0.0.1:6379/info", headers=headers)
+        self.assertEqual(resp.status_code, 403)
+        resp2 = self.make_request("GET", "/api/debug_curl?url=http://169.254.169.254/latest/meta-data", headers=headers)
+        self.assertEqual(resp2.status_code, 403)
+
+    # 34. SSRF Protection - /api/stream/segment rejects loopback & metadata IPs
+    def test_34_ssrf_segment_rejected_for_metadata(self):
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/stream/segment?url=http://169.254.169.254/secret.ts", headers=headers)
+        self.assertEqual(resp.status_code, 403)
+
 if __name__ == "__main__":
     unittest.main()

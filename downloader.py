@@ -9,6 +9,7 @@ import os
 import zipfile
 import time
 import hashlib
+import shutil
 
 # Load environment variables from .env file if present
 try:
@@ -849,26 +850,45 @@ async def download_file(dlink, filename):
                     return False
 
                 is_zip = "zip" in content_type.lower()
-                temp_filename = filename + ".zip" if is_zip else filename
+                safe_filename = os.path.basename(filename)
+                if not safe_filename or safe_filename in (".", ".."):
+                    safe_filename = "downloaded_file"
+                temp_filename = safe_filename + ".zip" if is_zip else safe_filename
 
                 # Write chunks to file
                 with open(temp_filename, "wb") as f:
                     downloaded = 0
+                    term_cols = shutil.get_terminal_size((80, 20)).columns
+                    bar_len = min(25, max(10, term_cols - 45))
+                    tot_mb = content_length / (1024 * 1024) if content_length else 0.0
+
                     async for chunk in dr.aiter_bytes(1024 * 1024):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
                             pct = downloaded / content_length * 100 if content_length else 0
-                            bar = "█" * int(pct / 2) + "░" * (50 - int(pct / 2))
-                            print(f"\r  [{bar}] {pct:.1f}%  {downloaded/1024/1024:.1f}/{content_length/1024/1024:.1f} MB", end="", flush=True)
-                    print()
+                            filled = int(pct / 100 * bar_len)
+                            bar = "█" * filled + "░" * (bar_len - filled)
+                            dl_mb = downloaded / (1024 * 1024)
+                            status_line = f"\r  [{bar}] {pct:5.1f}%  {dl_mb:.1f}/{tot_mb:.1f} MB"
+                            sys.stdout.write(status_line.ljust(term_cols - 1)[:term_cols - 1])
+                            sys.stdout.flush()
+
+                    # Finalize progress bar on its own line
+                    sys.stdout.write(f"\r  [{'█' * bar_len}] 100.0%  {tot_mb:.1f}/{tot_mb:.1f} MB\n")
+                    sys.stdout.flush()
 
                 if is_zip:
                     print("📦 Extracting ZIP archive...")
                     try:
                         def extract_zip():
+                            dest_dir = os.path.abspath(".")
                             with zipfile.ZipFile(temp_filename, "r") as zf:
-                                zf.extractall(".")
+                                for member in zf.infolist():
+                                    target_path = os.path.abspath(os.path.join(dest_dir, member.filename))
+                                    if not target_path.startswith(dest_dir + os.sep) and target_path != dest_dir:
+                                        raise RuntimeError(f"Zip traversal detected: {member.filename}")
+                                    zf.extract(member, dest_dir)
                             os.remove(temp_filename)
                         await asyncio.to_thread(extract_zip)
                         print(f"✅ Extraction completed successfully!")
@@ -878,7 +898,7 @@ async def download_file(dlink, filename):
                         print(f"ZIP file kept at: {temp_filename}")
                         return False
                 else:
-                    print(f"✅ Successfully saved: {filename}")
+                    print(f"✅ Successfully saved: {safe_filename}")
                     return True
     except Exception as e:
         print(f"❌ Download failed: {e}")
@@ -956,10 +976,10 @@ async def main():
         if file.get("error") and file.get("error") != "transcoding_in_progress":
             print(f"❌ Error: {file.get('error')}")
             continue
-
         if action == "s":
             if file.get("stream_ready"):
-                m3u8_filename = os.path.splitext(filename)[0] + ".m3u8"
+                safe_stream_filename = os.path.basename(filename) or "stream_video"
+                m3u8_filename = os.path.splitext(safe_stream_filename)[0] + ".m3u8"
                 with open(m3u8_filename, "w", encoding="utf-8") as f:
                     f.write(file.get("stream_m3u8"))
                 print(f"✅ Saved M3U8 streaming playlist to: {m3u8_filename}")
