@@ -77,7 +77,7 @@ async def validate_session_cookie(cookie_str):
     temp_cookies = parse_cookies(cookie_str)
     
     try:
-        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, timeout=15.0) as temp_client:
+        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, follow_redirects=True, timeout=15.0) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
                 return False, f"HTTP status {r.status_code}"
@@ -100,7 +100,7 @@ async def resolve_tokens_from_cookie(cookie_str):
     resolved = {}
     
     try:
-        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, timeout=15.0) as temp_client:
+        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, follow_redirects=True, timeout=15.0) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
                 raise Exception(f"TeraBox returned HTTP {r.status_code}")
@@ -171,7 +171,7 @@ async def refresh_account_tokens():
                       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Referer": f"{BASE_API}/",
     }
-    response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, timeout=20.0)
+    response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, follow_redirects=True, timeout=20.0)
     response.raise_for_status()
     html = response.text
 
@@ -997,6 +997,86 @@ async def main():
             dlink = file.get("dlink")
             if dlink:
                 await download_file(dlink, filename)
+async def multi_connection_stream_generator(
+    dlink: str,
+    start_byte: int,
+    end_byte: int,
+    headers: dict,
+    cookies: dict,
+    concurrency: int = 4,
+    chunk_size: int = 2 * 1024 * 1024,
+    max_ahead: int = 6,
+):
+    """
+    Asynchronously streams [start_byte, end_byte] from dlink using concurrency parallel connections.
+    Uses bounded look-ahead (max_ahead chunks) to prevent excessive memory usage.
+    Yields chunks in exact sequential order.
+    """
+    slices = []
+    cur = start_byte
+    idx = 0
+    while cur <= end_byte:
+        nxt = min(cur + chunk_size - 1, end_byte)
+        slices.append((idx, cur, nxt))
+        cur = nxt + 1
+        idx += 1
+
+    total_chunks = len(slices)
+    ready_chunks = {}
+    ready_events = {i: asyncio.Event() for i in range(total_chunks)}
+    sem = asyncio.Semaphore(concurrency)
+    window_sem = asyncio.Semaphore(max_ahead)
+    cancelled = False
+
+    async def worker(c_idx, c_start, c_end, client):
+        nonlocal cancelled
+        if cancelled:
+            return
+        await window_sem.acquire()
+        if cancelled:
+            return
+        async with sem:
+            if cancelled:
+                return
+            req_headers = {**headers, "Range": f"bytes={c_start}-{c_end}"}
+            for attempt in range(3):
+                try:
+                    res = await client.get(dlink, headers=req_headers, timeout=60.0)
+                    if res.status_code in (200, 206):
+                        ready_chunks[c_idx] = res.content
+                        ready_events[c_idx].set()
+                        return
+                except Exception:
+                    if attempt == 2:
+                        ready_chunks[c_idx] = None
+                        ready_events[c_idx].set()
+                        return
+                    await asyncio.sleep(1)
+
+    async with httpx.AsyncClient(
+        cookies=cookies,
+        timeout=60.0,
+        limits=httpx.Limits(max_connections=concurrency + 4, max_keepalive_connections=concurrency + 2),
+    ) as client:
+        tasks = [asyncio.create_task(worker(i, s, e, client)) for i, s, e in slices]
+        try:
+            for i in range(total_chunks):
+                await ready_events[i].wait()
+                chunk_data = ready_chunks.pop(i, None)
+                window_sem.release()
+                if chunk_data is None:
+                    raise IOError(f"Failed to fetch chunk {i}")
+                yield chunk_data
+        except (asyncio.CancelledError, GeneratorExit):
+            cancelled = True
+            for t in tasks:
+                t.cancel()
+            raise
+        finally:
+            cancelled = True
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
 if __name__ == "__main__":
     async def run_cli():

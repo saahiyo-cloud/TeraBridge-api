@@ -11,3 +11,22 @@ skills-lock.json
 venv
 
 speed_test_cookies.py
+
+# Local agent credentials
+.insta/agent-session.json
+
+# Local: the control plane this machine linked against
+.insta/link-plane.json
+
+# InstaCloud: local observe-hook state (regenerated per machine, not source)
+.insta/observe/
+.insta/audit.jsonl
+
+# InstaCloud: agent skills installed by `npx skills add` (regenerable, not source)
+.claude/skills/
+.agents/skills/
+.github/skills/
+
+.claude
+.codex
+.insta

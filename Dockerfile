@@ -61,13 +61,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/" || exit 1
 
-# gunicorn with threaded workers (gthread). This app is synchronous and
-# relies on threading + requests.Session pooling + threading.Event single-
-# flight locks — gevent/eventlet workers would monkeypatch the stdlib and
-# break all of that, so gthread is the only correct concurrency model here.
+# Gunicorn with Uvicorn workers (uvicorn.workers.UvicornWorker).
+# Built on FastAPI with asynchronous event loop concurrency (httpx + asyncio).
 #
-#   --workers        scale with CPU (default 2 × cores + 1, see gunicorn.conf.py)
-#   --threads        per-worker threads for concurrent streaming proxies
-#   --timeout 300    long enough for full-file downloads + 120s transcode polls
-#   --graceful-timeout gives in-flight requests time to finish on shutdown
+#   --workers           scales with CPU cores (configured in gunicorn.conf.py)
+#   --timeout 300       covers long streaming downloads + transcode polling
+#   --graceful-timeout  gives in-flight requests time to finish on shutdown
 CMD ["gunicorn", "--config", "gunicorn.conf.py", "api.index:app"]

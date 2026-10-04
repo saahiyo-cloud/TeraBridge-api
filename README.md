@@ -40,13 +40,16 @@ terabridge-api/
 │   └── account_pool.py       # Multi-account rotation and health management
 ├── downloader.py             # Core async library & CLI interface (httpx + asyncio)
 ├── load_test.py              # Concurrent load testing script
-├── gunicorn.conf.py          # Gunicorn config (UvicornWorker for Docker)
+├── test_api.py               # Comprehensive unit & integration test suite (34 tests)
+├── gunicorn.conf.py          # Gunicorn config (UvicornWorker ASGI for Docker)
 ├── Dockerfile                # Multi-stage Docker build
 ├── docker-compose.yml        # Docker Compose for local development
 ├── render.yaml               # Render.com Blueprint (free plan defaults)
 ├── railway.toml              # Railway deployment config (Docker builder + health check)
 ├── requirements.txt          # Python dependencies
 ├── vercel.json               # Vercel deployment rewrites config
+├── SECURITY.md               # Security vulnerability reporting policy
+├── .env.example              # Sample environment configuration
 └── README.md                 # This documentation
 ```
 
@@ -92,22 +95,34 @@ This launches an **Uvicorn** ASGI server on `http://0.0.0.0:5000`. The async eve
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `5000` | Server port |
-| `CACHE_TTL` | `60` | Cache time-to-live in seconds |
-| `CACHE_MAX_ENTRIES` | `256` | Maximum cached responses (LRU eviction) |
-| `RATE_LIMIT_RPM` | `30` | Max requests per minute per IP |
-| `API_KEY` | `None` | **Required in production.** Enforces authentication on all protected endpoints. |
+| `PORT` | `5000` / `8000` | Server port (`5000` when running `python api/index.py`; `8000` in Docker / Gunicorn). |
+| `TERABOX_COOKIE` | *(unset)* | **Primary credential.** Raw cookie string from browser DevTools (minimum required: `ndus=...; PANWEB=1`). |
+| `TERABOX_JSTOKEN` | *(auto)* | Optional JS token override. Auto-resolved dynamically from cookie if omitted. |
+| `TERABOX_BDSTOKEN` | *(auto)* | Optional BDS token override. Auto-resolved dynamically from cookie if omitted. |
+| `TERABOX_LOGID` | *(auto)* | Optional Log ID override. Auto-resolved dynamically from cookie if omitted. |
+| `API_KEY` | `None` | Secret key for securing protected endpoints. |
 | `HMAC_SECRET` | `API_KEY` | Secret for signing proxy URLs (download, stream, thumbnail). Defaults to `API_KEY`. |
-| `REQUIRE_API_KEY` | `auto` | Set to `0`/`false` to allow open access (dev only). `auto` = require when `API_KEY` is set. |
-| `TRUSTED_PROXIES` | *(empty)* | Comma-separated list of proxy IPs/CIDRs. Only needed for non-loopback proxies. |
-| `RENDER` | *(unset)* | Set to `true` on Render.com to auto-trust Render's load balancer. |
-| `VERCEL` | *(auto)* | Set automatically by Vercel — no manual config needed. |
-| `REDIRECT_SEGMENTS` | `false` | Set to `true` to 307-redirect segments to CDN instead of proxying. Cuts egress ~90% and avoids timeouts. |
-| `CRON_SECRET` | *(unset)* | Secret token to protect cron/keep-alive endpoints. |
-| `UPSTASH_REDIS_REST_URL` | *(unset)* | Upstash Redis REST URL for persistent caching, rate limiting, and account pool. |
+| `REQUIRE_API_KEY` | `auto` | Enforces authentication by default. Set to `0` or `false` to permit open, unauthenticated access during local dev. |
+| `CACHE_TTL` | `60` | Cache time-to-live in seconds for resolved links. |
+| `CACHE_MAX_ENTRIES` | `256` | Maximum cached responses before in-memory LRU eviction. |
+| `RATE_LIMIT_RPM` | `30` | Max requests per minute per IP. |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `FIREBASE_PROJECT_ID` | `teraplay-project` | Google Firebase project ID for validating client Bearer JWT ID tokens. |
+| `REDIRECT_SEGMENTS` | `false` | When `true`, returns a `307` redirect to the upstream CDN for `.ts` segments instead of proxying bytes. Cuts container egress bandwidth ~90%. |
+| `TRUSTED_PROXIES` | *(empty)* | Comma-separated list of proxy IPs/CIDRs. Loopback addresses are trusted automatically. |
+| `RENDER` | *(unset)* | Set to `true` on Render.com to auto-trust Render's reverse proxy header. |
+| `VERCEL` | *(auto)* | Set automatically by Vercel environment. |
+| `CRON_SECRET` | *(unset)* | Secret token to authenticate cron keep-alive / cookie validation requests. |
+| `UPSTASH_REDIS_REST_URL` | *(unset)* | Upstash Redis REST URL for distributed caching, rate limiting, and account pools. |
 | `UPSTASH_REDIS_REST_TOKEN` | *(unset)* | Upstash Redis REST token. |
-| `NOTIFICATION_WEBHOOK_URL` | *(unset)* | Discord/Slack webhook URL for session expiry alerts. |
-| `ALLOWED_ORIGINS` | *(empty)* | Comma-separated CORS origin allowlist. Empty = permissive for dev. |
+| `NOTIFICATION_WEBHOOK_URL` | *(unset)* | Webhook URL (Discord / Slack) for session expiration and transcode completion alerts. |
+| `ALLOWED_ORIGINS` | *(empty)* | Comma-separated CORS origin allowlist. Empty = permissive in dev. |
+| `SIG_TTL_SEGMENT_FREE` / `_PREMIUM` | `1800` / `7200` | Expiration TTL (in seconds) for signed HLS stream segment URLs (Free: 30m, Premium: 2h). |
+| `SIG_TTL_DOWNLOAD_FREE` / `_PREMIUM` | `7200` / `86400` | Expiration TTL (in seconds) for signed download URLs (Free: 2h, Premium: 24h). |
+| `SIG_TTL_MANIFEST_FREE` / `_PREMIUM` | `86400` / `2592000` | Expiration TTL (in seconds) for signed manifest URLs (Free: 24h, Premium: 30d). |
+| `SIG_TTL_THUMBNAIL_FREE` / `_PREMIUM` | `86400` / `2592000` | Expiration TTL (in seconds) for signed thumbnail URLs (Free: 24h, Premium: 30d). |
+| `HTTP_POOL_CONNECTIONS` | `50` | Downloader HTTP client connection pool limit. |
+| `HTTP_POOL_MAXSIZE` | `100` | Downloader HTTP client max pool size. |
 
 ```bash
 # Example: custom configuration with API Key
@@ -116,22 +131,30 @@ API_KEY=my_secret_key CACHE_TTL=120 PORT=8080 python api/index.py
 
 ### Authentication
 
-If `API_KEY` is defined in the environment, the server protects `/api/stats`, `/api/resolve`, and `/api/stream/manifest` endpoints. Clients must authenticate using one of the following methods:
+Protected endpoints (`/api/stats`, `/api/resolve`, `/api/admin/config`, `/api/debug_curl`, and unsigned `/api/stream/*` and `/api/download` requests) enforce authentication when `REQUIRE_API_KEY` is active (default).
+
+Clients can authenticate using any of the following methods:
 
 1. **HTTP Custom Header**:
    ```http
    X-API-Key: my_secret_key
    ```
-2. **Authorization Bearer Token** (also accepts Firebase ID tokens):
+2. **Authorization Bearer Token** (also accepts valid Firebase ID tokens):
    ```http
    Authorization: Bearer my_secret_key
    ```
-3. **Query Parameter** (recommended fallback for VLC/PotPlayer streams):
+3. **Query Parameter** (convenient for media players like VLC / PotPlayer):
    ```
    ?key=my_secret_key   or   ?api_key=my_secret_key
    ```
+4. **JSON Request Body** (for POST requests):
+   ```json
+   {
+     "key": "my_secret_key"
+   }
+   ```
 
-Rewritten segment, download, and thumbnail proxy URLs generated by `/api/resolve` and `/api/stream/manifest` use HMAC-signed tokens (`sig` + `exp` parameters) for authentication, so clients don't need to re-send the API key for every sub-request.
+Rewritten segment, download, and thumbnail proxy URLs generated by `/api/resolve` and `/api/stream/manifest` use HMAC-signed tokens (`sig` + `exp` parameters) for authentication, allowing streaming players to fetch sub-resources without resending the API key on every request.
 
 
 ### Endpoints
@@ -140,7 +163,7 @@ Rewritten segment, download, and thumbnail proxy URLs generated by `/api/resolve
 Returns server status, version, and uptime.
 
 #### **GET /api/stats** — Observability *(admin only)*
-Returns cache hit/miss statistics, rate limiter state, session health, and recent auth errors.
+Returns cache hit/miss statistics, rate limiter state, session health, Firebase project ID, and recent auth errors.
 
 **Example Response:**
 ```json
@@ -167,19 +190,23 @@ Returns cache hit/miss statistics, rate limiter state, session health, and recen
     "window_seconds": 60,
     "active_clients": 5,
     "total_blocked": 3
-  }
+  },
+  "firebase_project_id": "teraplay-project",
+  "recent_auth_errors": []
 }
 ```
 
 #### **GET | POST /api/resolve** — Resolve Share Links
 
-**Parameters:**
-- `url` (Required): The full Terabox share URL.
-- `mode` (Optional): `download` (default), `stream`, or `list`.
+Accepts URL parameters (GET) or a JSON body (POST).
+
+**Parameters / JSON Body Fields:**
+- `url` or `link` (Required): The full Terabox share URL.
+- `mode` or `action` (Optional): `download` / `d` (default), `stream` / `s`, or `list` / `l`.
 - `wait` (Optional): Set to `true` or `1` to block and retry if transcoding is in progress. Recommended `false` for serverless to avoid timeouts.
 
 **Example Request:**
-```
+```http
 GET http://127.0.0.1:5000/api/resolve?url=https://terasharelink.com/s/1LBCiS-QC7WtAR4OolsC2pQ&mode=download
 ```
 
@@ -204,6 +231,8 @@ GET http://127.0.0.1:5000/api/resolve?url=https://terasharelink.com/s/1LBCiS-QC7
         "url1": "http://127.0.0.1:5000/api/thumbnail?surl=...&fs_id=...&size_type=url1&sig=...&exp=...",
         "url3": "http://127.0.0.1:5000/api/thumbnail?surl=...&fs_id=...&size_type=url3&sig=...&exp=..."
       },
+      "path": "/cloudvids/VID_20231007175038.mp4",
+      "is_directory": false,
       "error": null
     }
   ]
@@ -233,30 +262,47 @@ Resolves and rewrites the HLS manifest playlist for media players. All media chu
 http://127.0.0.1:5000/api/stream/manifest?surl=1uCJPUU_1xRe10pU_bzEd0Q&fs_id=12345&sig=...&exp=...
 ```
 
-#### **GET /api/stream/segment** — Segment Proxy
+#### **GET /api/stream/segment** (or `/api/stream/segment.ts`) — Segment Proxy
 
-*Internal proxy route.* Streams segment binary files (`.ts` chunks) from Terabox CDNs using the active backend session headers and cookies. Features built-in SSRF protection limiting outbound requests to authorized Terabox and Baidu PCS domains.
+*Internal proxy route.* Streams segment binary files (`.ts` chunks) from Terabox CDNs using the active backend session headers and cookies. Features built-in SSRF protection limiting outbound requests to authorized Terabox and Baidu PCS domains. If `REDIRECT_SEGMENTS=true` is set, returns an HTTP 307 redirect directly to the CDN.
 
 #### **GET /api/download** — File Download Proxy
 
-Proxies the actual file download through the server, injecting the correct cookies and user-agent. Supports `Range` headers for resumable downloads. URLs are signed with HMAC tokens.
+Proxies the actual file download through the server, injecting the correct cookies and user-agent. Supports `Range` headers for resumable downloads and chunked multi-connection streaming for files over 4 MB. URLs are signed with HMAC tokens.
 
-#### **GET /api/thumbnail** — Thumbnail Proxy
+#### **GET /api/thumbnail** (or `/api/stream/thumbnail`) — Thumbnail Proxy
 
-Proxies thumbnail images for files. Can be accessed via `surl` + `fs_id` + `size_type` or a direct `url` parameter. HMAC-signed.
+Proxies thumbnail images for files. Can be accessed via `surl` + `fs_id` + `size_type` (e.g. `url1`, `url3`) or via a direct `url` parameter. HMAC-signed with SSRF protection.
 
-#### **POST /api/admin/config** — Dynamic Config *(admin only)*
+#### **GET | POST /api/admin/config** — Dynamic Config & Account Pool *(admin only)*
 
-Update Terabox credentials (cookie, js_token, bds_token, etc.) at runtime via the Redis account pool without redeploying.
+Manage Terabox credentials dynamically via Redis without redeploying:
+- **`GET`**: Returns the currently active account ID and a masked overview of all accounts in the pool.
+- **`POST`**: Adds or updates account credentials (`cookie`, `js_token`, `bds_token`, `logid`). Also accepts a convenient `{"ndus": "..."}` parameter which automatically builds the full cookie string and resolves tokens.
+
+#### **GET /api/debug_curl** — Admin Network Diagnostic *(admin only)*
+
+Makes an outbound HTTP request from the server to diagnose connectivity, inspect headers, and verify API responses (`?url=https://...`). Includes loopback and metadata SSRF protection.
 
 #### **GET | POST /api/cron/validate** — Session Health Check
 
-Validates the active Terabox session cookie. If expired, triggers a webhook alert to your configured Discord/Slack webhook. Authenticate with `CRON_SECRET` or admin API key.
+Validates active Terabox session cookies in the account pool. If a cookie has expired, it marks the account unhealthy, fails over to another healthy account, and triggers a webhook alert to your configured Discord/Slack webhook. Authenticate with `CRON_SECRET` (via query param `?secret=...` or JSON body) or the admin API key.
+
+---
+
+## 3. Automated Testing
+
+The repository includes a comprehensive unit and integration test suite covering health checks, authentication enforcement, route aliases, SSRF protection, HMAC signature verification, and admin endpoints:
+
+```bash
+# Run all 34 automated unit & integration tests
+python -m unittest test_api.py
+```
 
 ---
 
 
-## 3. Load Testing
+## 4. Load Testing
 
 A built-in load testing script is included for benchmarking:
 
@@ -284,7 +330,7 @@ Results include latency percentiles (min/avg/median/p90/p95/p99/max), throughput
 
 ---
 
-## 4. Railway Deployment
+## 5. Railway Deployment
 
 Railway uses the included `railway.toml` and `Dockerfile` — no extra setup needed.
 
@@ -317,7 +363,7 @@ Railway uses the included `railway.toml` and `Dockerfile` — no extra setup nee
 
 ---
 
-## 5. Vercel Deployment
+## 6. Vercel Deployment
 
 Deploy the API globally to Vercel in seconds:
 
@@ -336,7 +382,7 @@ Deploy the API globally to Vercel in seconds:
 
 ---
 
-## 6. Render.com Deployment (Free Plan)
+## 7. Render.com Deployment (Free Plan)
 
 The repo includes a [`render.yaml`](render.yaml) Blueprint with free-plan defaults pre-configured — one-click deploy with no manual setup.
 
@@ -348,12 +394,10 @@ The repo includes a [`render.yaml`](render.yaml) Blueprint with free-plan defaul
 4. After the first deploy, open the service → **Environment** tab and fill in the TeraBox credentials:
    | Variable | Description |
    |---|---|
-   | `TERABOX_COOKIE` | Full raw cookie string from browser DevTools |
-   | `TERABOX_JSTOKEN` | JS token value |
-   | `TERABOX_BDSTOKEN` | BDS token value |
-   | `TERABOX_SIGN` | Sign value |
-   | `TERABOX_TIMESTAMP` | Timestamp value |
-   | `TERABOX_LOGID` | Log ID value |
+   | `TERABOX_COOKIE` | **Required.** Full raw cookie string from browser DevTools (`ndus=...` is mandatory). |
+   | `TERABOX_JSTOKEN` | *(Optional)* JS token override (auto-resolved dynamically from cookie if omitted). |
+   | `TERABOX_BDSTOKEN` | *(Optional)* BDS token override (auto-resolved dynamically from cookie if omitted). |
+   | `TERABOX_LOGID` | *(Optional)* Log ID override (auto-resolved dynamically from cookie if omitted). |
 
    > `API_KEY` is auto-generated by the Blueprint on first deploy. Copy it from the **Environment** tab for authenticating requests.
 
@@ -370,7 +414,7 @@ If you prefer to create the service by hand:
    | `API_KEY` | Your secret key |
    | `RENDER` | `true` |
    | `REDIRECT_SEGMENTS` | `true` |
-   | `TERABOX_*` | *(your credential values)* |
+   | `TERABOX_COOKIE` | `ndus=...; PANWEB=1` |
 
 > **Why set `RENDER=true`?** Render runs the app behind its own reverse proxy.
 > When `RENDER` is set, the API trusts the `X-Forwarded-For` header that Render's
@@ -396,7 +440,7 @@ If you prefer to create the service by hand:
 
 ---
 
-## 7. Docker Deployment
+## 8. Docker Deployment
 
 ```bash
 # Build and run with Docker Compose

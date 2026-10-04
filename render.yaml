@@ -24,20 +24,18 @@ services:
         value: "true"
 
       # ── TeraBox credentials ──────────────────────────────────────────
-      # Required — fill these in on the Render dashboard (Environment tab)
-      # after the first deploy. NEVER commit real values to the repo.
+      # TERABOX_COOKIE (with ndus=...) is required.
+      # Other tokens (js_token, bds_token, logid) are auto-resolved automatically.
+      # Fill TERABOX_COOKIE in on the Render dashboard (Environment tab).
       - key: TERABOX_COOKIE
         sync: false
-      - key: TERABOX_JSTOKEN
-        sync: false
-      - key: TERABOX_BDSTOKEN
-        sync: false
-      - key: TERABOX_SIGN
-        sync: false
-      - key: TERABOX_TIMESTAMP
-        sync: false
-      - key: TERABOX_LOGID
-        sync: false
+      # Optional manual overrides (auto-resolved if omitted):
+      # - key: TERABOX_JSTOKEN
+      #   sync: false
+      # - key: TERABOX_BDSTOKEN
+      #   sync: false
+      # - key: TERABOX_LOGID
+      #   sync: false
 
       # ── API authentication ───────────────────────────────────────────
       - key: API_KEY

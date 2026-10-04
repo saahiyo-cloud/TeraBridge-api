@@ -1,14 +1,12 @@
 """
 Gunicorn configuration — tuned for the TeraBridge streaming proxy.
 
-This app is synchronous and built on:
-  - requests.Session connection pooling
-  - threading.Thread / threading.Event (single-flight locks, background workers)
-  - concurrent.futures.ThreadPoolExecutor (quality probing, file resolution)
+This app is built on FastAPI and Uvicorn's ASGI event loop:
+  - httpx.AsyncClient connection pooling & HTTP/2 multiplexing
+  - asyncio event loop non-blocking concurrency
+  - Redis / in-memory LRU caching and single-flight deduplication
 
-Therefore we use the `gthread` worker class. Do NOT switch to gevent or
-eventlet — their monkeypatching breaks requests pooling, threading.Event,
-and the ThreadPoolExecutor that quality probing relies on.
+Therefore we use the `uvicorn.workers.UvicornWorker` worker class.
 
 All values are overridable via environment variables so the same image can
 be deployed with different sizing on different hosts.
@@ -25,11 +23,10 @@ def _int_env(name, default):
 
 
 # ── Concurrency ──────────────────────────────────────────────────────
-# workers × threads = total concurrent requests the container can serve.
 # Default workers = min(2 × cores + 1, 4) — capped so small machines don't
 # oversubscribe, and because the real bottleneck is outbound TeraBox API
-# latency, not local CPU. Threads per worker handle concurrent streaming
-# proxies (each holds a thread for the transfer duration).
+# latency, not local CPU. Each worker runs an asynchronous Uvicorn event loop
+# capable of handling thousands of concurrent connections.
 _default_workers = min((multiprocessing.cpu_count() * 2) + 1, 4)
 workers = _int_env("GUNICORN_WORKERS", _default_workers)
 

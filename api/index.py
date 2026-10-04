@@ -39,7 +39,7 @@ try:
 except ImportError:
     pass
 
-from downloader import resolve_link, close_session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie, VIDEO_EXTS
+from downloader import resolve_link, close_session, parse_surl, UA, COOKIES_DICT, validate_session_cookie, resolve_tokens_from_cookie, VIDEO_EXTS, multi_connection_stream_generator
 from api.redis_client import redis_client
 from api.account_pool import get_next_healthy_account, mark_account_unhealthy, ACCOUNTS_HASH_KEY, ACTIVE_ACCOUNT_KEY, get_all_accounts
 
@@ -1677,13 +1677,56 @@ async def download_file_route(request: Request):
     if not dlink:
         return JSONResponse({"status": "error", "message": "Download link not available for this file."}, status_code=404)
 
-    client = _proxy_client
     try:
         headers = {
             "User-Agent": UA,
             "Referer": "https://dm.1024terabox.com/",
         }
+        file_size = target_file.get("size_bytes")
         range_header = request.headers.get("Range")
+
+        # High-performance multi-connection chunk streaming for files > 4MB
+        if file_size and file_size > 4 * 1024 * 1024:
+            start = 0
+            end = file_size - 1
+            status_code = 200
+
+            if range_header:
+                m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+                if m:
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), file_size - 1)
+                    status_code = 206
+
+            content_len = end - start + 1
+            resp_headers = {
+                "Content-Length": str(content_len),
+                "Content-Type": "application/octet-stream",
+                "Accept-Ranges": "bytes",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+            }
+            if status_code == 206:
+                resp_headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+            quoted_filename = urllib.parse.quote(filename)
+            resp_headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quoted_filename}"
+
+            stream_gen = multi_connection_stream_generator(
+                dlink=dlink,
+                start_byte=start,
+                end_byte=end,
+                headers=headers,
+                cookies=COOKIES_DICT,
+                concurrency=4,
+                chunk_size=2 * 1024 * 1024,
+            )
+            return StreamingResponse(stream_gen, status_code=status_code, headers=resp_headers)
+
+        # Fallback to single stream for small files (<4MB) or unspecified size
+        client = _proxy_client
         if range_header:
             headers["Range"] = range_header
 
