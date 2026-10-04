@@ -10,13 +10,14 @@ load_dotenv()
 TEST_BASE_URL = os.environ.get("TEST_BASE_URL", "").rstrip("/")
 API_KEY = os.environ.get("API_KEY", "supercloudkey")
 CRON_SECRET = os.environ.get("CRON_SECRET", "supercronsecret")
-TEST_LINK = "https://1024terabox.com/s/1uCJPUU_1xRe10pU_bzEd0Q"
+TEST_LINK = os.environ.get("TEST_LINK", "https://terasharefile.com/s/1Xd-gXSePXGWNThkFYrC86A")
 
 # Import app for in-process testing if not testing a live remote server
 if not TEST_BASE_URL:
     try:
         from fastapi.testclient import TestClient
-        from api.index import app, generate_signature
+        from api.index import app
+        from api.signing import generate_signature
     except ImportError as e:
         print("[Error] Failed to import app or FastAPI TestClient. Ensure you are running in the virtual environment.")
         raise e
