@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 # ── Logger ────────────────────────────────────────────────────────────
 logger = logging.getLogger("terabridge.api")
@@ -30,6 +31,24 @@ if not logger.handlers:
     )
     logger.addHandler(_handler)
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+
+# ── Clean up Uvicorn Access Logs (Truncate long thumbnail URLs & hide rsa_pub probes) ──
+class AccessLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if hasattr(record, "args") and isinstance(record.args, tuple) and len(record.args) >= 3:
+            raw_path = str(record.args[2])
+            # Hide noise from client / browser probes like /rsa_pub and /favicon.ico
+            if raw_path in ("/rsa_pub", "/favicon.ico") or raw_path.startswith("/rsa_pub?"):
+                return False
+            # Truncate extremely long query URLs (such as /api/thumbnail or /api/download) in access logs
+            if len(raw_path) > 75 and ("thumbnail" in raw_path or "url=" in raw_path):
+                short_path = raw_path[:65] + "...[truncated]"
+                args_list = list(record.args)
+                args_list[2] = short_path
+                record.args = tuple(args_list)
+        return True
+
+logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 # ── Project root on sys.path (resolves downloader module) ─────────────
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -163,8 +182,25 @@ def home():
             "/api/stream/manifest": "HLS master playlist for a share link",
             "/api/download":        "Proxied file download (HMAC-signed URL)",
             "/api/thumbnail":       "Proxied thumbnail image (HMAC-signed URL)",
+            "/admin":               "Cloudvids file management dashboard",
         },
     }
+
+
+@app.get("/rsa_pub")
+@app.get("/favicon.ico")
+def ignore_browser_probes():
+    """Silently answer browser/client probes without 404 spam in the logs."""
+    return Response(status_code=204)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
+def serve_dashboard():
+    dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "dashboard.html")
+    if os.path.exists(dashboard_path):
+        return FileResponse(dashboard_path, media_type="text/html")
+    return HTMLResponse("<h3>Dashboard file not found.</h3>", status_code=404)
 
 
 # ─── Dev server entry point ──────────────────────────────────────────

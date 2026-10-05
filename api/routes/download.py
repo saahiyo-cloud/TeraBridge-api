@@ -6,13 +6,14 @@ Routes:
   GET /api/thumbnail   — proxies thumbnail images
   GET /api/stream/thumbnail — alias
 """
+import hashlib
 import logging
 import re
 import urllib.parse
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from api.auth import check_auth
 from api.cache import cache
@@ -258,35 +259,74 @@ async def stream_thumbnail(request: Request):
                 status_code=403,
             )
 
+    # ── Multi-Tier Thumbnail Caching (Browser Cache-Control + Redis / Memory) ─
+    cache_lookup_key = url if url else f"{surl}:{fs_id}:{size_type}"
+    etag = f'"{hashlib.md5(cache_lookup_key.encode("utf-8")).hexdigest()}"'
+
+    # Check browser conditional If-None-Match header for 304 Not Modified
+    client_etag = request.headers.get("if-none-match")
+    if client_etag and client_etag.strip() == etag:
+        return Response(
+            status_code=304,
+            headers={
+                "ETag": etag,
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    # Check server-side cache (Redis / In-Memory)
+    cached_thumb = cache.get_thumbnail(cache_lookup_key)
+    if cached_thumb is not None:
+        thumb_bytes, content_type = cached_thumb
+        return Response(
+            content=thumb_bytes,
+            media_type=content_type,
+            headers={
+                "Content-Length": str(len(thumb_bytes)),
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
+                "ETag": etag,
+                "X-Cache": "HIT",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+            },
+        )
+
     client = _proxy_client
     try:
-        req_ctx = client.stream("GET", url, headers={"User-Agent": UA}, timeout=30.0)
-        req = await req_ctx.__aenter__()
+        r = await client.get(url, headers={"User-Agent": UA}, timeout=25.0)
+        if r.status_code == 200:
+            thumb_data = r.content
+            ct = r.headers.get("Content-Type", "image/jpeg")
+            cache.put_thumbnail(cache_lookup_key, thumb_data, ct)
+            return Response(
+                content=thumb_data,
+                media_type=ct,
+                headers={
+                    "Content-Length": str(len(thumb_data)),
+                    "Content-Type": ct,
+                    "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
+                    "ETag": etag,
+                    "X-Cache": "MISS",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                },
+            )
+        else:
+            return JSONResponse(
+                {"status": "error", "message": f"Upstream CDN returned status {r.status_code}"},
+                status_code=r.status_code,
+            )
 
-        resp_headers = {}
-        for key in ("Content-Length", "Content-Type"):
-            if key in req.headers:
-                resp_headers[key] = req.headers[key]
-        resp_headers.update({
-            "Access-Control-Allow-Origin":  "*",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-        })
-
-        async def generate():
-            try:
-                async for chunk in req.aiter_bytes(chunk_size=32768):
-                    yield chunk
-            finally:
-                await req_ctx.__aexit__(None, None, None)
-
-        return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
-
+    except httpx.HTTPError as exc:
+        logger.debug("Upstream thumbnail fetch failed: %s", exc)
+        return JSONResponse({"status": "error", "message": "Failed to fetch thumbnail from upstream CDN."}, status_code=502)
     except Exception as exc:
-        return JSONResponse(
-            {"status": "error", "message": f"Thumbnail proxy error: {exc}"},
-            status_code=500,
-        )
+        logger.warning("Thumbnail proxy error: %s", exc)
+        return JSONResponse({"status": "error", "message": "Thumbnail unavailable."}, status_code=500)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────

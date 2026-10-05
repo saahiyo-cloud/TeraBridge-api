@@ -207,3 +207,37 @@ class ConfigRefreshMiddleware:
                 _config_loader()
                 _last_config_check = now
         await self.app(scope, receive, send)
+
+
+class LogQueryTruncateMiddleware:
+    """
+    Truncates exceptionally long query strings (like /api/thumbnail?url=https://dm-data...)
+    in ASGI scope before Uvicorn formats the access log line.
+    """
+
+    def __init__(self, app, max_len: int = 40):
+        self.app = app
+        self.max_len = max_len
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            raw_qs = scope.get("query_string", b"")
+            path = scope.get("path", "")
+            if path in ("/api/thumbnail", "/api/stream/thumbnail") and raw_qs:
+                # Keep a short clean preview in Uvicorn access log (e.g. ?url=https://dm-data...[truncated])
+                if len(raw_qs) > self.max_len:
+                    original_qs = raw_qs
+                    # Store original on scope for route handlers
+                    scope["original_query_string"] = original_qs
+                    shortened = raw_qs[:self.max_len] + b"..."
+                    scope["query_string"] = shortened
+
+                    async def wrapped_receive():
+                        return await receive()
+
+                    try:
+                        await self.app(scope, receive, send)
+                    finally:
+                        scope["query_string"] = original_qs
+                    return
+        await self.app(scope, receive, send)

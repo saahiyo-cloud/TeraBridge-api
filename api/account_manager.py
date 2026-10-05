@@ -12,6 +12,7 @@ from api.account_pool import (
     ACCOUNTS_HASH_KEY,
     ACTIVE_ACCOUNT_KEY,
     get_next_healthy_account,
+    safe_json_loads,
 )
 
 logger = logging.getLogger("terabridge.account_manager")
@@ -43,10 +44,7 @@ def load_config_from_redis():
         if active_id:
             raw_creds = redis_client.hget(ACCOUNTS_HASH_KEY, active_id)
             if raw_creds:
-                try:
-                    creds = json.loads(raw_creds)
-                except Exception:
-                    pass
+                creds = safe_json_loads(raw_creds)
 
         # If the stored active account is unhealthy (or missing), rotate
         if not creds or creds.get("status") != "healthy":

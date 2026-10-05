@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeraBridge — Cloudvids Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#10b981',
+              600: '#059669',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .glass-card {
+      background: rgba(18, 24, 38, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.5); border-radius: 9999px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.8); }
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .animate-subtle { animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  </style>
+</head>
+<body class="bg-[#0b0f17] text-slate-100 min-h-screen selection:bg-emerald-500/30 selection:text-emerald-300">
+
+  <!-- Background decorative glows -->
+  <div class="fixed inset-0 overflow-hidden pointer-events-none -z-10">
+    <div class="absolute -top-40 -left-40 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px]"></div>
+    <div class="absolute top-1/3 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-[128px]"></div>
+    <div class="absolute -bottom-40 left-1/3 w-96 h-96 bg-purple-500/10 rounded-full blur-[128px]"></div>
+  </div>
+
+  <!-- Header / Navigation -->
+  <header class="sticky top-0 z-30 border-b border-white/5 bg-[#0b0f17]/95 backdrop-blur-xl">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      
+      <!-- Top Tier: Brand & System Controls -->
+      <div class="h-16 flex items-center justify-between border-b border-white/5 gap-4">
+        <!-- Brand Logo -->
+        <div class="flex items-center gap-3 flex-shrink-0">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-[1px] shadow-lg shadow-emerald-500/20">
+            <div class="w-full h-full bg-[#0d131f] rounded-[11px] flex items-center justify-center">
+              <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-base tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">TeraBridge</span>
+              <span class="text-[10px] font-mono tracking-wider font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Cloudvids</span>
+            </div>
+            <p class="text-[11px] text-slate-400 font-normal leading-tight hidden sm:block">Active Storage & Account Pool Manager</p>
+          </div>
+        </div>
+
+        <!-- Global Action Controls -->
+        <div class="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
+          <!-- Add account button -->
+          <button onclick="openAccountModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-xs font-semibold text-emerald-400 transition shadow-sm shadow-emerald-500/10">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Add Account</span>
+          </button>
+
+          <!-- Auth Key status button -->
+          <button onclick="promptApiKey()" id="authBtn" title="Set Admin API Key" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-slate-900/80 hover:bg-slate-800 text-xs font-medium text-slate-300 transition">
+            <svg class="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            <span id="authStatusText" class="font-mono text-[11px]">Key: Configured</span>
+          </button>
+
+          <!-- Refresh button -->
+          <button onclick="loadAll(true)" title="Force Refresh from TeraBox (Bypass Cache)" class="p-2 rounded-xl border border-white/10 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white transition">
+            <svg id="refreshIcon" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Lower Tier: Navigation Tabs & Viewing Context -->
+      <div class="py-2.5 flex items-center justify-between gap-4 flex-wrap sm:flex-nowrap">
+        <!-- Navigation Tabs (Pill Switcher) -->
+        <nav class="flex items-center gap-1 bg-slate-900/90 border border-white/10 rounded-xl p-1 text-xs flex-shrink-0">
+          <button id="tabFilesBtn" onclick="switchTab('files')" class="px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+            </svg>
+            <span>Cloudvids Storage</span>
+          </button>
+          <button id="tabAccountsBtn" onclick="switchTab('accounts')" class="px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+            </svg>
+            <span>Accounts Pool (<span id="accCountBadge">0</span>)</span>
+          </button>
+        </nav>
+
+        <!-- Account selector dropdown -->
+        <div id="accountSelectWrapper" class="flex items-center gap-2 bg-slate-900/90 border border-white/10 hover:border-white/20 rounded-xl px-3 py-1.5 text-xs transition flex-shrink-0">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-pulse"></span>
+          <span class="text-slate-400 font-medium">Viewing Account:</span>
+          <select id="accountSelect" onchange="onAccountChange()" class="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] truncate">
+            <option value="" class="bg-slate-900">Active Account</option>
+          </select>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+    <!-- Files & Storage View (Tab 1) -->
+    <div id="filesView" class="space-y-6">
+      <!-- Top Banner: Storage Quota & Quick Metrics -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <!-- Card 1: Storage Quota Bar -->
+        <div class="glass-card rounded-2xl p-5 md:col-span-2 relative overflow-hidden flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1.5 3 3.5 3h9c2 0 3.5-1 3.5-3V7c0-2-1.5-3-3.5-3h-9C5.5 4 4 5 4 7zm0 5h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="text-sm font-semibold text-white">TeraBox Account Quota</h3>
+                  <p class="text-xs text-slate-400" id="quotaSubtitle">Fetching storage limits...</p>
+                </div>
+              </div>
+              <span id="quotaPctBadge" class="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">--%</span>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="w-full bg-slate-800/80 rounded-full h-3.5 overflow-hidden p-0.5 border border-white/5 mt-4">
+              <div id="quotaBar" class="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-blue-500 transition-all duration-700 ease-out" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between text-xs text-slate-400 mt-4 pt-3 border-t border-white/5 font-mono">
+            <div>Used: <span id="usedGbText" class="text-white font-medium">0 GB</span></div>
+            <div>Free: <span id="freeGbText" class="text-white font-medium">0 GB</span></div>
+            <div>Total: <span id="totalGbText" class="text-white font-medium">0 GB</span></div>
+          </div>
+        </div>
+
+        <!-- Card 2: Folder Stats -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <div class="p-2 rounded-lg bg-blue-500/10 text-blue-400">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <span class="text-xs font-medium text-slate-400">Path: <code class="text-slate-300 font-mono">/cloudvids</code></span>
+            </div>
+            <div class="mt-2">
+              <div class="text-3xl font-bold font-mono text-white" id="folderFileCount">0</div>
+              <p class="text-xs text-slate-400 mt-1">Transferred files currently held</p>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 pt-3 border-t border-white/5 flex items-center justify-between font-mono">
+            <span>Folder Size:</span>
+            <span id="folderTotalSize" class="text-emerald-400 font-semibold">0 MB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Management Controls & Action Bar -->
+      <div class="glass-card rounded-2xl p-4 sm:p-5">
+        <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+          
+          <!-- Left: Search & Filter -->
+          <div class="flex flex-wrap items-center gap-3 flex-1">
+            <div class="relative flex-1 min-w-[240px]">
+              <input 
+                type="text" 
+                id="searchInput" 
+                placeholder="Search by file name or fs_id..." 
+                oninput="filterFiles()"
+                class="w-full bg-slate-900/90 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition font-mono"
+              />
+              <svg class="w-4 h-4 text-slate-500 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+
+            <!-- Sort dropdown -->
+            <select id="sortSelect" onchange="sortFiles()" class="bg-slate-900/90 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 cursor-pointer">
+              <option value="time_desc">Newest First</option>
+              <option value="time_asc">Oldest First</option>
+              <option value="size_desc">Largest Size</option>
+              <option value="size_asc">Smallest Size</option>
+              <option value="name_asc">Name (A-Z)</option>
+            </select>
+          </div>
+
+          <!-- Right: Bulk Actions -->
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <button onclick="selectAll(true)" class="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-800 border border-white/5 transition">
+              Select All
+            </button>
+            <button onclick="selectAll(false)" class="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-800 border border-white/5 transition">
+              Clear
+            </button>
+
+            <!-- Quick Prune Older Than dropdown -->
+            <div class="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300">
+              <span>Prune:</span>
+              <button onclick="selectOlderThan(24)" class="hover:text-emerald-400 transition">&gt;24h</button>
+              <span class="text-slate-600">|</span>
+              <button onclick="selectOlderThan(48)" class="hover:text-emerald-400 transition">&gt;48h</button>
+              <span class="text-slate-600">|</span>
+              <button onclick="selectOlderThan(72)" class="hover:text-emerald-400 transition">&gt;3d</button>
+            </div>
+
+            <!-- Delete Button -->
+            <button 
+              id="deleteBtn" 
+              onclick="confirmDeleteSelected()" 
+              disabled 
+              class="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600/80 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-lg shadow-rose-900/20"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span id="deleteBtnText">Delete Selected (0)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table of Files in /cloudvids -->
+      <div class="glass-card rounded-2xl overflow-hidden">
+        <div class="overflow-x-auto custom-scrollbar">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-white/5 bg-slate-900/60 text-slate-400 uppercase tracking-wider font-mono">
+                <th class="py-3.5 px-4 w-10">
+                  <input type="checkbox" id="masterCheckbox" onchange="toggleMasterCheckbox(this.checked)" class="rounded bg-slate-800 border-white/20 text-emerald-500 focus:ring-0 cursor-pointer">
+                </th>
+                <th class="py-3.5 px-4">Preview & Name</th>
+                <th class="py-3.5 px-4">Size</th>
+                <th class="py-3.5 px-4">FS ID</th>
+                <th class="py-3.5 px-4">Added</th>
+                <th class="py-3.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="filesTableBody" class="divide-y divide-white/5 text-slate-300">
+              <!-- Loading state -->
+              <tr>
+                <td colspan="6" class="py-16 text-center text-slate-400">
+                  <div class="inline-flex items-center gap-3">
+                    <div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Loading files from /cloudvids...</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Empty State View (hidden by default) -->
+        <div id="emptyState" class="hidden py-16 text-center">
+          <div class="w-12 h-12 rounded-2xl bg-slate-800/80 border border-white/10 flex items-center justify-center mx-auto mb-3 text-slate-400">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
+          </div>
+          <h4 class="text-sm font-semibold text-white">No files in /cloudvids</h4>
+          <p class="text-xs text-slate-500 mt-1">Files will appear here when links are resolved in stream or download mode.</p>
+        </div>
+      </div>
+    </div>
+    <!-- Accounts Management View (Tab 2) -->
+    <div id="accountsView" class="hidden space-y-6">
+      <div class="glass-card rounded-2xl p-5 flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold text-white">TeraBox Account Pool</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Manage credentials, tokens, active rotation status and health monitoring.</p>
+        </div>
+        <button onclick="openAccountModal()" class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-900/20 transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
+          <span>Add New Account</span>
+        </button>
+      </div>
+
+      <!-- Environment Match Notice Banner -->
+      <div id="envNoticeBanner" class="hidden glass-card rounded-xl p-3 border border-indigo-500/30 bg-indigo-950/20"></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" id="accountsGrid">
+        <!-- Account cards will render here -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Add / Edit Account Modal -->
+  <div id="accountModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="glass-card max-w-lg w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-900/60">
+        <h3 id="accountModalTitle" class="text-sm font-bold text-white">Add TeraBox Account</h3>
+        <button onclick="closeAccountModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <form onsubmit="saveAccountForm(event)" class="p-5 space-y-4 text-xs">
+        <div>
+          <label class="block font-medium text-slate-300 mb-1">Account Identifier</label>
+          <input 
+            type="text" 
+            id="accIdInput" 
+            placeholder="e.g. account_1, premium_user_2" 
+            required 
+            class="w-full bg-slate-900 border border-white/10 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+          />
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="font-medium text-slate-300">Cookie / ndus Token</label>
+            <span class="text-[11px] text-slate-500">Provide full cookie string or ndus value</span>
+          </div>
+          <textarea 
+            id="accCookieInput" 
+            rows="3" 
+            placeholder="ndus=... or full cookie string (ndus=...; PANWEB=1; ...)" 
+            class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono custom-scrollbar"
+          ></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-medium text-slate-300 mb-1">bds_token (optional)</label>
+            <input 
+              type="text" 
+              id="accBdsInput" 
+              placeholder="Auto-scraped if empty" 
+              class="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+            />
+          </div>
+          <div>
+            <label class="block font-medium text-slate-300 mb-1">js_token (optional)</label>
+            <input 
+              type="text" 
+              id="accJsInput" 
+              placeholder="Auto-scraped if empty" 
+              class="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+            />
+          </div>
+        </div>
+
+        <div class="pt-2 flex items-center justify-end gap-2.5">
+          <button type="button" onclick="closeAccountModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition">
+            Cancel
+          </button>
+          <button type="submit" id="saveAccSubmitBtn" class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-white transition">
+            <span>Save & Validate</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Video Preview Modal -->
+  <div id="previewModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="glass-card max-w-3xl w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-900/60">
+        <div class="truncate pr-4">
+          <h3 id="modalFilename" class="text-sm font-bold text-white truncate">Video Preview</h3>
+          <p id="modalFsid" class="text-xs font-mono text-slate-400 mt-0.5">fs_id: --</p>
+        </div>
+        <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div class="aspect-video bg-black rounded-xl overflow-hidden relative border border-white/5 flex items-center justify-center">
+          <video id="previewPlayer" controls class="w-full h-full object-contain"></video>
+        </div>
+        <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+          <span id="modalPath">Path: --</span>
+          <span id="modalSize">Size: --</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+    <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900 border border-white/10 shadow-2xl text-xs font-medium text-white">
+      <span id="toastIcon" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+      <span id="toastMsg">Success</span>
+    </div>
+  </div>
+
+  <!-- Application Logic -->
+  <script>
+    // State management
+    let filesData = [];
+    let selectedPaths = new Set();
+    let apiKey = sessionStorage.getItem('terabridge_api_key') || localStorage.getItem('terabridge_api_key') || '';
+
+    // If no key in storage, check query parameter ?key=...
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!apiKey && urlParams.get('key')) {
+      apiKey = urlParams.get('key');
+      sessionStorage.setItem('terabridge_api_key', apiKey);
+    }
+    updateAuthBtnText();
+
+    function updateAuthBtnText() {
+      const btn = document.getElementById('authStatusText');
+      if (apiKey) {
+        btn.textContent = `Key: ${apiKey.slice(0, 4)}...${apiKey.slice(-3)}`;
+      } else {
+        btn.textContent = 'Set API Key';
+      }
+    }
+
+    function promptApiKey() {
+      const entered = prompt('Enter your TeraBridge Admin API Key (X-API-Key):', apiKey);
+      if (entered !== null) {
+        apiKey = entered.trim();
+        sessionStorage.setItem('terabridge_api_key', apiKey);
+        updateAuthBtnText();
+        loadAll();
+      }
+    }
+
+    function getAuthHeaders() {
+      return apiKey ? { 'X-API-Key': apiKey } : {};
+    }
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      const toastIcon = document.getElementById('toastIcon');
+      toastMsg.textContent = msg;
+      toastIcon.className = `w-2 h-2 rounded-full ${isError ? 'bg-rose-400' : 'bg-emerald-400'}`;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3500);
+    }
+
+    async function loadQuota(forceRefresh = false) {
+      const acc = document.getElementById('accountSelect').value;
+      let url = `/api/admin/storage/quota${acc ? '?account_id=' + encodeURIComponent(acc) : ''}`;
+      if (forceRefresh) url += (url.includes('?') ? '&' : '?') + 'refresh=1';
+      try {
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (res.status === 401) {
+          showToast('Unauthorized: Please configure API Key', true);
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json();
+          const pct = data.used_percent || 0;
+          document.getElementById('quotaBar').style.width = `${Math.min(pct, 100)}%`;
+          document.getElementById('quotaPctBadge').textContent = `${pct}% Used`;
+          document.getElementById('usedGbText').textContent = `${data.used_gb} GB`;
+          document.getElementById('freeGbText').textContent = `${data.free_gb} GB`;
+          document.getElementById('totalGbText').textContent = `${data.total_gb} GB`;
+          document.getElementById('quotaSubtitle').textContent = `Account: ${data.account_id}`;
+        }
+      } catch (e) {
+        console.error('Error fetching quota:', e);
+      }
+    }
+
+    async function loadFiles(forceRefresh = false) {
+      const acc = document.getElementById('accountSelect').value;
+      let url = `/api/admin/cloudvids${acc ? '?account_id=' + encodeURIComponent(acc) : ''}`;
+      if (forceRefresh) url += (url.includes('?') ? '&' : '?') + 'refresh=1';
+      const tbody = document.getElementById('filesTableBody');
+      const refreshIcon = document.getElementById('refreshIcon');
+      refreshIcon.classList.add('animate-spin');
+
+      try {
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (res.status === 401) {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-12 text-center text-rose-400">Unauthorized: Admin API key required. Click "Set API Key" above.</td></tr>`;
+          return;
+        }
+        const data = await res.json();
+        if (data.status === 'success') {
+          filesData = data.files || [];
+          renderFilesTable();
+          updateMetrics();
+        } else {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-12 text-center text-rose-400">Error: ${data.message || 'Failed to list'}</td></tr>`;
+        }
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="py-12 text-center text-rose-400">Connection error: ${e.message}</td></tr>`;
+      } finally {
+        refreshIcon.classList.remove('animate-spin');
+      }
+    }
+
+    function renderFilesTable() {
+      const tbody = document.getElementById('filesTableBody');
+      const emptyState = document.getElementById('emptyState');
+      const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+
+      let filtered = filesData.filter(f => {
+        if (!search) return true;
+        return (f.filename && f.filename.toLowerCase().includes(search)) ||
+               (f.fs_id && f.fs_id.includes(search));
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        return;
+      }
+      emptyState.classList.add('hidden');
+
+      let html = '';
+      filtered.forEach(file => {
+        const isChecked = selectedPaths.has(file.path);
+        const dateStr = file.created_at ? new Date(file.created_at * 1000).toLocaleString() : '--';
+        const thumbSrc = file.thumbnail || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23334155"%3E%3Cpath d="M4 4h16v16H4z"/%3E%3C/svg%3E';
+
+        html += `
+          <tr class="hover:bg-white/[0.02] transition group ${isChecked ? 'bg-emerald-500/[0.04]' : ''}">
+            <td class="py-3 px-4">
+              <input type="checkbox" onchange="toggleSelectPath('${escapeQuotes(file.path)}', this.checked)" ${isChecked ? 'checked' : ''} class="rounded bg-slate-800 border-white/20 text-emerald-500 focus:ring-0 cursor-pointer">
+            </td>
+            <td class="py-3 px-4">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-9 rounded-lg overflow-hidden bg-slate-900 border border-white/10 flex-shrink-0 flex items-center justify-center relative group-hover:border-emerald-500/30 transition">
+                  <img src="${thumbSrc}" alt="thumb" class="w-full h-full object-cover" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 24 24\\' fill=\\'%23334155\\'%3E%3Cpath d=\\'M4 4h16v16H4z\\'/ %3E%3C/svg%3E'">
+                </div>
+                <div class="min-w-0 max-w-md">
+                  <div class="font-medium text-white truncate hover:text-emerald-300 cursor-pointer" onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="${escapeQuotes(file.filename)}">
+                    ${file.filename}
+                  </div>
+                  <div class="text-[11px] font-mono text-slate-500 truncate">${file.path}</div>
+                </div>
+              </div>
+            </td>
+            <td class="py-3 px-4 font-mono font-medium text-slate-300">
+              ${file.size_mb} MB
+            </td>
+            <td class="py-3 px-4 font-mono text-slate-400">
+              ${file.fs_id}
+            </td>
+            <td class="py-3 px-4 text-slate-400 text-[11px] font-mono whitespace-nowrap">
+              ${dateStr}
+            </td>
+            <td class="py-3 px-4 text-right whitespace-nowrap">
+              <div class="inline-flex items-center gap-2">
+                <button onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="Play / Preview" class="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+                <button onclick="deleteSingleFile('${escapeQuotes(file.path)}')" title="Delete" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = html;
+      updateDeleteBtn();
+    }
+
+    function escapeQuotes(str) {
+      return (str || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    }
+
+    function toggleSelectPath(path, checked) {
+      if (checked) {
+        selectedPaths.add(path);
+      } else {
+        selectedPaths.delete(path);
+      }
+      updateDeleteBtn();
+      renderFilesTable();
+    }
+
+    function toggleMasterCheckbox(checked) {
+      selectAll(checked);
+    }
+
+    function selectAll(checked) {
+      if (checked) {
+        filesData.forEach(f => selectedPaths.add(f.path));
+      } else {
+        selectedPaths.clear();
+      }
+      const master = document.getElementById('masterCheckbox');
+      if (master) master.checked = checked;
+      renderFilesTable();
+      updateDeleteBtn();
+    }
+
+    function selectOlderThan(hours) {
+      const now = Math.floor(Date.now() / 1000);
+      const cutoff = now - (hours * 3600);
+      selectedPaths.clear();
+      filesData.forEach(f => {
+        if (f.created_at && f.created_at < cutoff) {
+          selectedPaths.add(f.path);
+        }
+      });
+      renderFilesTable();
+      updateDeleteBtn();
+      showToast(`Selected ${selectedPaths.size} file(s) older than ${hours} hours`);
+    }
+
+    function updateDeleteBtn() {
+      const count = selectedPaths.size;
+      const btn = document.getElementById('deleteBtn');
+      const text = document.getElementById('deleteBtnText');
+      text.textContent = `Delete Selected (${count})`;
+      btn.disabled = count === 0;
+    }
+
+    function updateMetrics() {
+      document.getElementById('folderFileCount').textContent = filesData.length;
+      const totalMb = filesData.reduce((acc, f) => acc + (f.size_mb || 0), 0);
+      document.getElementById('folderTotalSize').textContent = `${totalMb.toFixed(1)} MB`;
+    }
+
+    function filterFiles() {
+      renderFilesTable();
+    }
+
+    function sortFiles() {
+      const mode = document.getElementById('sortSelect').value;
+      if (mode === 'time_desc') {
+        filesData.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      } else if (mode === 'time_asc') {
+        filesData.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+      } else if (mode === 'size_desc') {
+        filesData.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+      } else if (mode === 'size_asc') {
+        filesData.sort((a, b) => (a.size_bytes || 0) - (b.size_bytes || 0));
+      } else if (mode === 'name_asc') {
+        filesData.sort((a, b) => (a.filename || '').localeCompare(b.filename || ''));
+      }
+      renderFilesTable();
+    }
+
+    async function deleteSingleFile(path) {
+      if (!confirm(`Delete "${path}" from TeraBox account?`)) return;
+      await executeDelete([path]);
+    }
+
+    async function confirmDeleteSelected() {
+      if (selectedPaths.size === 0) return;
+      if (!confirm(`Permanently delete ${selectedPaths.size} selected file(s) from /cloudvids?`)) return;
+      await executeDelete(Array.from(selectedPaths));
+    }
+
+    async function executeDelete(pathsList) {
+      const acc = document.getElementById('accountSelect').value || activeAccId || '';
+      const url = `/api/admin/cloudvids${acc ? '?account_id=' + encodeURIComponent(acc) : ''}`;
+
+      try {
+        const res = await fetch(url, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ paths: pathsList })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(`Deleted ${pathsList.length} file(s) successfully!`);
+          pathsList.forEach(p => selectedPaths.delete(p));
+          loadAll();
+        } else {
+          showToast(data.message || 'Delete failed', true);
+        }
+      } catch (e) {
+        showToast(`Request failed: ${e.message}`, true);
+      }
+    }
+
+    function switchTab(tab) {
+      const filesView = document.getElementById('filesView');
+      const accountsView = document.getElementById('accountsView');
+      const tabFilesBtn = document.getElementById('tabFilesBtn');
+      const tabAccountsBtn = document.getElementById('tabAccountsBtn');
+      const accSelectWrap = document.getElementById('accountSelectWrapper');
+
+      if (tab === 'files') {
+        filesView.classList.remove('hidden');
+        accountsView.classList.add('hidden');
+        accSelectWrap.classList.remove('hidden');
+        tabFilesBtn.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
+        tabAccountsBtn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
+        loadFiles();
+      } else {
+        filesView.classList.add('hidden');
+        accountsView.classList.remove('hidden');
+        accSelectWrap.classList.add('hidden');
+        tabAccountsBtn.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
+        tabFilesBtn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
+        loadAccounts();
+      }
+    }
+
+    let accountsPoolData = {};
+    let activeAccId = null;
+
+    async function loadAccounts() {
+      try {
+        const res = await fetch('/api/admin/config', { headers: getAuthHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          accountsPoolData = data.accounts_pool || {};
+          activeAccId = data.active_account_id;
+
+          const select = document.getElementById('accountSelect');
+          select.innerHTML = '<option value="" class="bg-slate-900">Active Account</option>';
+          const count = Object.keys(accountsPoolData).length;
+          document.getElementById('accCountBadge').textContent = count;
+
+          Object.entries(accountsPoolData).forEach(([id, acc]) => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.className = 'bg-slate-900';
+            
+            let label = id;
+            if (acc.is_env_account) {
+              label += ' [.ENV]';
+            }
+            if (acc.username) {
+              label += ` - ${acc.username}`;
+            } else if (acc.email) {
+              label += ` - ${acc.email}`;
+            }
+            if (id === activeAccId) {
+              label += ' [ACTIVE]';
+            }
+            opt.textContent = label;
+            opt.title = `${id}${acc.is_env_account ? ' [.ENV]' : ''} | ${acc.username || ''} | ${acc.email || ''} | ${acc.status || 'healthy'}`;
+            select.appendChild(opt);
+          });
+
+          // Update .env match notification banner
+          const envEntry = Object.entries(accountsPoolData).find(([_, a]) => a.is_env_account);
+          const banner = document.getElementById('envNoticeBanner');
+          if (banner) {
+            if (envEntry) {
+              const [envId, envAcc] = envEntry;
+              banner.classList.remove('hidden');
+              banner.innerHTML = `
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+                    <span class="text-slate-300">Environment (<code class="text-indigo-300 font-mono font-bold">.env</code>) is linked to:</span>
+                    <span class="font-bold text-white font-mono bg-indigo-500/20 px-2 py-0.5 rounded-lg border border-indigo-500/40">${envId}</span>
+                    ${envAcc.username ? `<span class="text-slate-400 font-semibold font-sans">(${escapeQuotes(envAcc.username)}${envAcc.email ? ' &bull; ' + escapeQuotes(envAcc.email) : ''})</span>` : ''}
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[11px] text-indigo-300/80 font-mono">Status: ${envAcc.status || 'healthy'}</span>
+                    ${envId !== activeAccId ? `<button onclick="activateAccount('${escapeQuotes(envId)}')" class="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold transition">Activate .ENV Account</button>` : '<span class="text-[10px] font-mono font-bold text-emerald-400 uppercase bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">Currently Active</span>'}
+                  </div>
+                </div>
+              `;
+            } else {
+              banner.classList.add('hidden');
+            }
+          }
+
+          renderAccountsGrid();
+        }
+      } catch (e) {
+        console.warn('Could not load accounts pool:', e);
+      }
+    }
+
+    function renderAccountsGrid() {
+      const grid = document.getElementById('accountsGrid');
+      if (!grid) return;
+
+      const entries = Object.entries(accountsPoolData);
+      if (entries.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full py-16 text-center glass-card rounded-2xl p-8">
+            <div class="w-12 h-12 rounded-2xl bg-slate-800/80 border border-white/10 flex items-center justify-center mx-auto mb-3 text-slate-400">
+              <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </div>
+            <h4 class="text-sm font-semibold text-white">No accounts in the Redis pool</h4>
+            <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">The API is currently falling back to your default .env credentials. Add accounts to enable automatic rotation and high availability.</p>
+            <button onclick="openAccountModal()" class="mt-4 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white transition">Add First Account</button>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+      entries.forEach(([id, acc]) => {
+        const isActive = (id === activeAccId);
+        const isHealthy = (acc.status === 'healthy');
+        const isEnv = !!acc.is_env_account;
+        const lastUsedStr = acc.last_used ? new Date(acc.last_used * 1000).toLocaleString() : 'Never';
+        const initial = (acc.username || id).charAt(0).toUpperCase();
+
+        const avatarMarkup = acc.avatar_url 
+          ? `<img src="${acc.avatar_url}" alt="avatar" class="w-10 h-10 rounded-xl object-cover border border-white/10 shadow-sm flex-shrink-0" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center font-bold text-white font-mono text-sm\\'>${initial}</div>'">`
+          : `<div class="w-10 h-10 rounded-xl bg-gradient-to-tr ${isEnv ? 'from-indigo-500 to-purple-500' : 'from-emerald-500 to-teal-400'} flex items-center justify-center font-bold text-white font-mono text-sm shadow-sm flex-shrink-0">${initial}</div>`;
+
+        html += `
+          <div class="glass-card rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between border ${isActive ? 'border-emerald-500/50 shadow-xl shadow-emerald-950/30' : isEnv ? 'border-indigo-500/40 shadow-lg shadow-indigo-950/20' : 'border-white/5'}">
+            <div>
+              <div class="flex items-center justify-between mb-3.5">
+                <div class="flex items-center gap-3 min-w-0">
+                  ${avatarMarkup}
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <h4 class="text-sm font-bold font-mono text-white truncate" title="${escapeQuotes(id)}">${id}</h4>
+                      ${isEnv ? '<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>.ENV Match</span>' : ''}
+                    </div>
+                    <p class="text-xs text-slate-300 font-semibold truncate mt-0.5">${escapeQuotes(acc.username || 'No Profile Name')}</p>
+                  </div>
+                </div>
+                <div>
+                  ${isActive 
+                    ? '<span class="text-[10px] font-mono font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Active</span>'
+                    : `<button onclick="activateAccount('${escapeQuotes(id)}')" class="text-[11px] font-medium text-slate-400 hover:text-emerald-400 hover:underline">Set Active</button>`
+                  }
+                </div>
+              </div>
+
+              <!-- Profile Details -->
+              <div class="bg-slate-900/60 rounded-xl p-3 mb-3 border border-white/5 space-y-1.5 text-xs">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-400 flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5 text-rose-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    Email / Gmail:
+                  </span>
+                  <span class="font-mono text-slate-200 truncate font-medium text-right" title="${escapeQuotes(acc.email || '')}">${acc.email || '<span class="text-slate-500">None</span>'}</span>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-slate-400 flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                    User UK:
+                  </span>
+                  <span class="font-mono text-slate-300 text-[11px]">${acc.uk || '--'}</span>
+                </div>
+              </div>
+
+              <div class="space-y-1.5 text-xs font-mono text-slate-400">
+                <div class="flex items-center justify-between">
+                  <span>Status:</span>
+                  <span class="${isHealthy ? 'text-emerald-400' : 'text-rose-400 font-bold'} flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-emerald-400' : 'bg-rose-500 animate-pulse'}"></span>
+                    ${acc.status || 'healthy'}
+                  </span>
+                </div>
+                ${!isHealthy && acc.unhealthy_reason ? `
+                <div class="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-sans break-words mt-1.5">
+                  <span class="font-semibold text-rose-400 font-mono">Flagged Reason:</span> ${escapeQuotes(acc.unhealthy_reason)}
+                </div>` : ''}
+                <div class="flex items-center justify-between">
+                  <span>Cookie:</span>
+                  <span class="text-slate-300 truncate max-w-[150px]">${acc.cookie || 'not set'}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span>bds_token:</span>
+                  <span class="text-slate-300">${acc.bds_token || 'auto'}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span>Last Used:</span>
+                  <span class="text-slate-300 text-[11px]">${lastUsedStr}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-4 mt-4 border-t border-white/5 text-xs gap-2">
+              <div class="flex items-center gap-2">
+                <button onclick="editAccount('${escapeQuotes(id)}')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  <span>Edit</span>
+                </button>
+                <button onclick="verifyAccount('${escapeQuotes(id)}')" title="Re-test credentials with TeraBox" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${isHealthy ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white' : 'bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold'} transition">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Re-test</span>
+                </button>
+              </div>
+              <button onclick="deleteAccount('${escapeQuotes(id)}')" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition" title="Delete account">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      });
+
+      grid.innerHTML = html;
+    }
+
+    function openAccountModal(accId = '') {
+      const modal = document.getElementById('accountModal');
+      const title = document.getElementById('accountModalTitle');
+      const idInput = document.getElementById('accIdInput');
+      const cookieInput = document.getElementById('accCookieInput');
+      const bdsInput = document.getElementById('accBdsInput');
+      const jsInput = document.getElementById('accJsInput');
+
+      if (accId && accountsPoolData[accId]) {
+        const isEnv = accountsPoolData[accId].is_env_account;
+        title.innerHTML = `Edit Account: <span class="font-mono text-emerald-400">${accId}</span> ${isEnv ? '<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">.ENV Match</span>' : ''}`;
+        idInput.value = accId;
+        idInput.readOnly = true;
+        cookieInput.value = '';
+        bdsInput.value = '';
+        jsInput.value = '';
+      } else {
+        title.textContent = 'Add New TeraBox Account';
+        idInput.value = `account_${Object.keys(accountsPoolData).length + 1}`;
+        idInput.readOnly = false;
+        cookieInput.value = '';
+        bdsInput.value = '';
+        jsInput.value = '';
+      }
+
+      modal.classList.remove('hidden');
+    }
+
+    function closeAccountModal() {
+      document.getElementById('accountModal').classList.add('hidden');
+    }
+
+    function editAccount(accId) {
+      openAccountModal(accId);
+    }
+
+    async function activateAccount(accId) {
+      try {
+        const res = await fetch('/api/admin/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ account_id: accId, action: 'activate' })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(`Account '${accId}' set as active!`);
+          loadAll();
+        } else {
+          showToast(data.message || 'Failed to activate', true);
+        }
+      } catch (e) {
+        showToast(e.message, true);
+      }
+    }
+
+    async function verifyAccount(accId) {
+      showToast(`Testing '${accId}' with TeraBox...`);
+      try {
+        const res = await fetch('/api/admin/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ account_id: accId, action: 'verify' })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(data.message || `Account '${accId}' verified healthy!`);
+          loadAll();
+        } else {
+          showToast(data.message || `Account '${accId}' re-test failed`, true);
+          loadAccounts();
+        }
+      } catch (e) {
+        showToast(e.message, true);
+      }
+    }
+
+    async function deleteAccount(accId) {
+      if (!confirm(`Remove account '${accId}' from Redis pool?`)) return;
+      try {
+        const res = await fetch(`/api/admin/config?account_id=${encodeURIComponent(accId)}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(`Account '${accId}' removed!`);
+          loadAll();
+        } else {
+          showToast(data.message || 'Delete failed', true);
+        }
+      } catch (e) {
+        showToast(e.message, true);
+      }
+    }
+
+    async function saveAccountForm(event) {
+      event.preventDefault();
+      const submitBtn = document.getElementById('saveAccSubmitBtn');
+      const accId = document.getElementById('accIdInput').value.trim();
+      const cookieVal = document.getElementById('accCookieInput').value.trim();
+      const bdsVal = document.getElementById('accBdsInput').value.trim();
+      const jsVal = document.getElementById('accJsInput').value.trim();
+
+      const payload = { account_id: accId };
+      if (cookieVal) payload.cookie = cookieVal;
+      if (bdsVal) payload.bds_token = bdsVal;
+      if (jsVal) payload.js_token = jsVal;
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `
+        <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+        <span>Validating...</span>
+      `;
+
+      try {
+        const res = await fetch('/api/admin/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(`Account '${accId}' saved successfully!`);
+          closeAccountModal();
+          loadAll();
+        } else {
+          showToast(data.message || 'Save failed', true);
+        }
+      } catch (e) {
+        showToast(`Save error: ${e.message}`, true);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span>Save & Validate</span>';
+      }
+    }
+
+    function openPreview(path, filename, fsid, sizeMb) {
+      document.getElementById('modalFilename').textContent = filename;
+      document.getElementById('modalFsid').textContent = `fs_id: ${fsid}`;
+      document.getElementById('modalPath').textContent = `Path: ${path}`;
+      document.getElementById('modalSize').textContent = `Size: ${sizeMb} MB`;
+
+      const player = document.getElementById('previewPlayer');
+      player.pause();
+      player.src = '';
+
+      document.getElementById('previewModal').classList.remove('hidden');
+    }
+
+    function closePreviewModal() {
+      const player = document.getElementById('previewPlayer');
+      player.pause();
+      player.src = '';
+      document.getElementById('previewModal').classList.add('hidden');
+    }
+
+    function onAccountChange() {
+      selectedPaths.clear();
+      loadAll();
+    }
+
+    function loadAll(forceRefresh = false) {
+      loadAccounts();
+      loadQuota(forceRefresh);
+      loadFiles(forceRefresh);
+    }
+
+    // Initial boot
+    window.addEventListener('DOMContentLoaded', () => {
+      loadAll();
+    });
+  </script>
+</body>
+</html>

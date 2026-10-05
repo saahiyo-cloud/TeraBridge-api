@@ -1,6 +1,8 @@
 import json
 import logging
 import time
+import re
+import httpx
 from api.redis_client import redis_client
 
 logger = logging.getLogger("terabridge.account_pool")
@@ -8,18 +10,96 @@ logger = logging.getLogger("terabridge.account_pool")
 ACCOUNTS_HASH_KEY = "terabridge:accounts"
 ACTIVE_ACCOUNT_KEY = "terabridge:active_account_id"
 
+def safe_json_loads(val):
+    """Safely parse JSON from Redis strings, bytes, or dicts, stripping trailing commas if needed."""
+    if not val:
+        return {}
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, bytes):
+        val = val.decode("utf-8", errors="ignore")
+    if not isinstance(val, str):
+        return {}
+    try:
+        return json.loads(val)
+    except Exception:
+        cleaned = re.sub(r',\s*([}\]])', r'\1', val)
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            return {}
+
+def extract_ndus(cookie_str: str) -> str:
+    """Extract the ndus token value from a cookie string."""
+    for part in (cookie_str or "").split(";"):
+        p = part.strip()
+        if p.startswith("ndus="):
+            return p.split("=", 1)[1].strip()
+    return ""
+
+async def fetch_account_profile(cookie_str: str, bds_token: str = None) -> dict:
+    """
+    Query TeraBox to retrieve user profile metadata:
+    username, unmasked email (gmail), uk, and avatar.
+    """
+    if not cookie_str:
+        return {}
+    from downloader import parse_cookies, BASE_API, UA, qp
+    cookies_dict = parse_cookies(cookie_str)
+    cookies_dict['PANWEB'] = '1'
+    headers = {'User-Agent': UA, 'Referer': 'https://dm.1024terabox.com/main'}
+
+    try:
+        async with httpx.AsyncClient(headers=headers, cookies=cookies_dict, follow_redirects=True, timeout=12.0) as client:
+            # 1. Scrape bdstoken and uk from /main
+            r = await client.get(f"{BASE_API}/main")
+            m_uk = re.search(r'["\']uk["\']\s*:\s*["\']?(\d+)', r.text)
+            m_bds = re.search(r'["\']bdstoken["\']\s*:\s*["\']([a-f0-9]{32})["\']', r.text)
+            uk = m_uk.group(1) if m_uk else None
+            bds = bds_token or (m_bds.group(1) if m_bds else "")
+
+            if not uk:
+                r_login = await client.get(f"{BASE_API}/api/check/login")
+                data_login = r_login.json()
+                if data_login.get("errno") == 0 and data_login.get("uk"):
+                    uk = str(data_login.get("uk"))
+
+            if not uk:
+                return {}
+
+            params = {
+                "need_relation": "0",
+                "need_secret_info": "1",
+                "user_list": json.dumps([uk]),
+                "bdstoken": bds,
+            }
+            r_info = await client.get(f"{BASE_API}/api/user/getinfo?{qp()}", params=params)
+            info = r_info.json()
+            if info.get("errno") == 0 and info.get("records"):
+                rec = info["records"][0]
+                return {
+                    "username": rec.get("uname") or rec.get("nick_name") or "",
+                    "email": rec.get("bind_res") or rec.get("email") or "",
+                    "uk": str(rec.get("uk") or uk),
+                    "avatar_url": rec.get("avatar_url") or "",
+                    "vip_type": rec.get("vip_type", 0),
+                }
+    except Exception as e:
+        logger.debug("Failed to fetch profile for account: %s", e)
+    return {}
+
 def get_all_accounts():
-    """Fetch all accounts from Upstash Redis."""
+    """Fetch all accounts from Upstash Redis using resilient JSON parsing."""
     if not redis_client:
         return {}
     try:
         raw_accounts = redis_client.hgetall(ACCOUNTS_HASH_KEY) or {}
         accounts = {}
         for acc_id, raw_val in raw_accounts.items():
-            try:
-                accounts[acc_id] = json.loads(raw_val)
-            except Exception:
-                pass
+            acc_id_str = acc_id.decode("utf-8") if isinstance(acc_id, bytes) else acc_id
+            data = safe_json_loads(raw_val)
+            if data:
+                accounts[acc_id_str] = data
         return accounts
     except Exception as e:
         logger.error("Failed to fetch accounts from Redis: %s", e)

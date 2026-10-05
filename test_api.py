@@ -292,5 +292,55 @@ class TestTeraBridgeAPI(unittest.TestCase):
         resp = self.make_request("GET", "/api/stream/segment?url=http://169.254.169.254/secret.ts", headers=headers)
         self.assertEqual(resp.status_code, 403)
 
+    # 35. Admin Dashboard - /admin and /dashboard serve HTML
+    def test_35_dashboard_html_served(self):
+        resp = self.make_request("GET", "/admin")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("text/html", resp.headers.get("content-type", ""))
+        self.assertIn("TeraBridge", resp.text)
+        self.assertIn("Cloudvids", resp.text)
+
+    # 36. /api/admin/storage/quota - Auth Enforced & Structure
+    def test_36_storage_quota_endpoint(self):
+        # 401 without auth
+        resp_unauth = self.make_request("GET", "/api/admin/storage/quota")
+        self.assertEqual(resp_unauth.status_code, 401)
+        # 200 with auth
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/admin/storage/quota", headers=headers)
+        self.assertIn(resp.status_code, [200, 400])
+        if resp.status_code == 200:
+            data = resp.json()
+            self.assertEqual(data.get("status"), "success")
+            self.assertIn("total_bytes", data)
+            self.assertIn("used_bytes", data)
+
+    # 37. /api/admin/cloudvids (GET) - Auth Enforced & List
+    def test_37_cloudvids_list_endpoint(self):
+        # 401 without auth
+        resp_unauth = self.make_request("GET", "/api/admin/cloudvids")
+        self.assertEqual(resp_unauth.status_code, 401)
+        # 200 with auth
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/admin/cloudvids", headers=headers)
+        self.assertIn(resp.status_code, [200, 400])
+        if resp.status_code == 200:
+            data = resp.json()
+            self.assertEqual(data.get("status"), "success")
+            self.assertIn("files", data)
+
+    # 38. /api/admin/cloudvids (DELETE) - Auth & Validation
+    def test_38_cloudvids_delete_validation(self):
+        # 401 without auth
+        resp_unauth = self.make_request("DELETE", "/api/admin/cloudvids", json={"paths": ["/cloudvids/test.mp4"]})
+        self.assertEqual(resp_unauth.status_code, 401)
+        # 400 when missing paths
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("DELETE", "/api/admin/cloudvids", json={}, headers=headers)
+        self.assertEqual(resp.status_code, 400)
+        # 400 when path outside /cloudvids is given
+        resp_outside = self.make_request("DELETE", "/api/admin/cloudvids", json={"paths": ["/root/malicious.mp4"]}, headers=headers)
+        self.assertEqual(resp_outside.status_code, 400)
+
 if __name__ == "__main__":
     unittest.main()

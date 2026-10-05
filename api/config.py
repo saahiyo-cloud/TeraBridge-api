@@ -22,8 +22,10 @@ REQUIRE_API_KEY = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0",
 CRON_SECRET    = os.environ.get("CRON_SECRET")
 
 # ─── Cache ────────────────────────────────────────────────────────────
-CACHE_TTL_SECONDS  = int(os.environ.get("CACHE_TTL", 60))
-CACHE_MAX_ENTRIES  = int(os.environ.get("CACHE_MAX_ENTRIES", 256))
+CACHE_TTL_SECONDS     = int(os.environ.get("CACHE_TTL", 300))
+CACHE_MAX_ENTRIES     = int(os.environ.get("CACHE_MAX_ENTRIES", 512))
+CACHE_THUMBNAIL_TTL   = int(os.environ.get("CACHE_THUMBNAIL_TTL", 86400))
+CACHE_DASHBOARD_TTL   = int(os.environ.get("CACHE_DASHBOARD_TTL", 60))
 
 # ─── Rate limiting ────────────────────────────────────────────────────
 RATE_LIMIT_RPM    = int(os.environ.get("RATE_LIMIT_RPM", 30))
