@@ -32,3 +32,5 @@ speed_test_cookies.py
 .insta
 # Private planning docs
 private-plane.md
+
+.insta/.agent-session-*.tmp
