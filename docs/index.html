@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TeraBridge API — Developer Documentation</title>
+  <meta name="description" content="High-concurrency async Python API and CLI for programmatic Terabox direct download links, HLS video manifests, and multi-account proxying.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Global Header -->
+<header class="top-header">
+  <div class="header-left">
+    <button class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Open Navigation">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <a href="#" class="brand-wrapper">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <span>TeraBridge</span>
+      <span class="brand-badge">v2.4.0</span>
+    </a>
+  </div>
+
+  <div class="header-center">
+    <button class="search-trigger" aria-label="Search Documentation">
+      <span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Search docs or endpoints...
+      </span>
+      <span class="kbd">⌘K</span>
+    </button>
+  </div>
+
+  <div class="header-right">
+    <a href="https://github.com/saahiyo-cloud/TeraBridge-api" target="_blank" rel="noopener" class="header-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+    <button class="header-btn" id="theme-toggle" aria-label="Toggle Theme">
+      <!-- Icon populated by script.js -->
+    </button>
+  </div>
+</header>
+
+<!-- Main App Layout -->
+<div class="docs-layout">
+  
+  <!-- Left Column: Navigation Sidebar -->
+  <aside class="docs-sidebar" id="docs-sidebar">
+    <div class="nav-group">
+      <div class="nav-group-title">Overview</div>
+      <a href="#overview" class="nav-link active">Introduction</a>
+      <a href="#features" class="nav-link">Core Features</a>
+      <a href="#quickstart" class="nav-link">Quick Start</a>
+      <a href="#interactive-sandbox" class="nav-link">Live Request Sandbox</a>
+      <a href="#cli" class="nav-link">Interactive CLI</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-title">Authentication</div>
+      <a href="#authentication" class="nav-link">API Keys &amp; Bearer</a>
+      <a href="#url-signing" class="nav-link">HMAC URL Signing</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-title">API Endpoints</div>
+      <a href="#ep-resolve" class="nav-link">
+        <span>Resolve Link</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-manifest" class="nav-link">
+        <span>HLS Manifest</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-segment" class="nav-link">
+        <span>Video Segment</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-download" class="nav-link">
+        <span>File Download</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-thumbnail" class="nav-link">
+        <span>Thumbnails</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-stats" class="nav-link">
+        <span>System Stats</span>
+        <span class="nav-method get">GET</span>
+      </a>
+      <a href="#ep-admin" class="nav-link">
+        <span>Account Pool</span>
+        <span class="nav-method post">POST</span>
+      </a>
+      <a href="#ep-cron" class="nav-link">
+        <span>Session Health</span>
+        <span class="nav-method get">GET</span>
+      </a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-title">Configuration</div>
+      <a href="#environment-variables" class="nav-link">Environment Variables</a>
+      <a href="#architecture" class="nav-link">Pipeline Architecture</a>
+      <a href="#benchmarking" class="nav-link">Load Testing</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-title">Production Deployment</div>
+      <a href="#deploy-railway" class="nav-link">Railway (Docker)</a>
+      <a href="#deploy-render" class="nav-link">Render.com Blueprint</a>
+      <a href="#deploy-vercel" class="nav-link">Vercel Serverless</a>
+      <a href="#deploy-docker" class="nav-link">Docker Compose</a>
+    </div>
+  </aside>
+
+  <!-- Center Column: Primary Documentation Content -->
+  <main class="docs-content">
+    
+    <!-- Hero / Overview -->
+    <section class="docs-section" id="overview">
+      <div class="eyebrow">Production-Grade Terabox Gateway</div>
+      <h1 class="docs-title">Direct downloads &amp; HLS streaming, <span class="gradient-text">engineered for scale.</span></h1>
+      <p class="lead-text">
+        TeraBridge is an enterprise-ready async Python API service and CLI built on FastAPI, Uvicorn, and HTTPX. It dynamically bypasses session verification blocks, extracts high-speed direct download links, generates playable HLS manifests, and manages distributed multi-account failover.
+      </p>
+
+      <div class="hero-stats-row">
+        <div class="stat-pill">
+          <div class="stat-pill-label">Concurrency</div>
+          <div class="stat-pill-value">100% Async</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-label">Video Engine</div>
+          <div class="stat-pill-value">HLS M3U8</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-label">Test Suite</div>
+          <div class="stat-pill-value">38/38 Pass</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-label">Security</div>
+          <div class="stat-pill-value">HMAC + SSRF</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Live Sandbox -->
+    <section class="docs-section" id="interactive-sandbox">
+      <div class="eyebrow">Interactive Sandbox</div>
+      <h2 class="section-heading">Live Request &amp; Code Generator</h2>
+      <p>Configure request parameters below. Code snippets for cURL, Python, and JavaScript compile live in real time:</p>
+
+      <div class="playground-card">
+        <div class="playground-header">
+          <div class="playground-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Request Builder
+          </div>
+          <span class="auth-badge">Live Reactivity</span>
+        </div>
+
+        <div class="playground-form-grid">
+          <div class="input-field-group">
+            <label for="sandbox-url">Terabox Share Link</label>
+            <input type="text" id="sandbox-url" class="input-control" value="https://1024terabox.com/s/1Ay4FfmgooobETTVRHcf4mA">
+          </div>
+          <div class="input-field-group">
+            <label for="sandbox-mode">Mode / Action</label>
+            <select id="sandbox-mode" class="input-control">
+              <option value="download">download (d)</option>
+              <option value="stream">stream (s)</option>
+              <option value="list">list (l)</option>
+            </select>
+          </div>
+          <div class="input-field-group">
+            <label for="sandbox-key">API Key</label>
+            <input type="text" id="sandbox-key" class="input-control" value="my_secret_key">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 20px; align-items: center; margin-bottom: 20px;">
+          <div style="flex: 1;" class="input-field-group">
+            <label for="sandbox-host">Target API Host</label>
+            <input type="text" id="sandbox-host" class="input-control" value="http://127.0.0.1:5000">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 18px;">
+            <input type="checkbox" id="sandbox-wait" style="accent-color: var(--brand); width: 16px; height: 16px;">
+            <label for="sandbox-wait" style="font-size: 0.82rem; color: var(--text-secondary); cursor: pointer;">Wait for HLS transcoding (wait=true)</label>
+          </div>
+        </div>
+
+        <!-- Compiled Code Tabs -->
+        <div class="code-window" style="margin: 0;">
+          <div class="code-window-header">
+            <div class="code-window-tabs">
+              <button class="code-tab active" data-lang="curl">cURL</button>
+              <button class="code-tab" data-lang="python">Python (httpx)</button>
+              <button class="code-tab" data-lang="js">JavaScript (fetch)</button>
+            </div>
+            <div class="code-window-actions">
+              <button class="copy-button">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                Copy
+              </button>
+            </div>
+          </div>
+          <div class="code-content">
+            <div class="code-snippet" data-lang="curl" id="snippet-curl"></div>
+            <div class="code-snippet" data-lang="python" id="snippet-python" style="display: none;"></div>
+            <div class="code-snippet" data-lang="js" id="snippet-js" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Core Features Grid -->
+    <section class="docs-section" id="features">
+      <div class="eyebrow">Engineered Architecture</div>
+      <h2 class="section-heading">Production Capabilities</h2>
+      
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3>Async-First Core</h3>
+          <p>Powered by FastAPI and Uvicorn ASGI loop with HTTPX connection pooling and HTTP/2 multiplexing. Zero OS thread exhaustion.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 8 6 4-6 4Z"/></svg>
+          </div>
+          <h3>Native HLS Streaming</h3>
+          <p>Rewrites m3u8 manifests with multi-bitrate profiles (1080p, 720p, 480p, 360p) for immediate playback in VLC, Apple Safari, and PotPlayer.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <h3>HMAC Token Signing</h3>
+          <p>All download, stream manifest, and segment proxy URLs are signed with cryptographic SHA256 HMAC tokens with customizable TTL tiers.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3>Multi-Account Failover</h3>
+          <p>Rotate between dozens of pooled Terabox accounts via Redis with continuous background health checks and automatic failover.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+          <h3>Single-Flight Collapsing</h3>
+          <p>Concurrent burst requests targeting identical share links are deduplicated into a single upstream request, eliminating stampedes.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <h3>Egress Bandwidth Saver</h3>
+          <p>Toggle <code>REDIRECT_SEGMENTS=true</code> to issue HTTP 307 redirects straight to upstream CDNs, slashing egress bandwidth by 90%.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section class="docs-section" id="quickstart">
+      <div class="eyebrow">Getting Started</div>
+      <h2 class="section-heading">Quick Start (30 Seconds)</h2>
+      <p>Clone the repository, configure your Terabox session cookie, and launch the ASGI server locally:</p>
+
+      <div class="code-window">
+        <div class="code-window-header">
+          <div class="code-window-tabs">
+            <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);">Terminal / Bash</span>
+          </div>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content"><span class="tok-comment"># 1. Clone repository & install dependencies</span>
+git clone https://github.com/saahiyo-cloud/TeraBridge-api.git
+cd TeraBridge-api
+pip install -r requirements.txt
+
+<span class="tok-comment"># 2. Configure credentials in .env</span>
+<span class="tok-cmd">echo</span> <span class="tok-str">'TERABOX_COOKIE="ndus=YOUR_NDUS_TOKEN; PANWEB=1"'</span> >> .env
+<span class="tok-cmd">echo</span> <span class="tok-str">'API_KEY="my_secret_key"'</span> >> .env
+
+<span class="tok-comment"># 3. Start high-performance Uvicorn server (port 5000)</span>
+python api/index.py</div>
+      </div>
+
+      <div class="callout-box warning">
+        <div class="callout-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="callout-body">
+          <strong>Windows Performance Notice:</strong> Always bind and make requests against <code>http://127.0.0.1:5000</code> rather than <code>http://localhost:5000</code>. On Windows systems, reverse DNS resolution of <code>localhost</code> adds ~2000ms latency to every request.
+        </div>
+      </div>
+    </section>
+
+    <!-- CLI Section -->
+    <section class="docs-section" id="cli">
+      <div class="eyebrow">Command Line Utility</div>
+      <h2 class="section-heading">CLI Usage</h2>
+      <p><code>downloader.py</code> doubles as both the backend engine and an interactive CLI utility:</p>
+
+      <div class="code-window">
+        <div class="code-window-header">
+          <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);">CLI Commands</span>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content"><span class="tok-comment"># 1. Direct multi-connection download mode</span>
+python downloader.py <span class="tok-str">"https://1024terabox.com/s/1Ay4FfmgooobETTVRHcf4mA"</span>
+
+<span class="tok-comment"># 2. Generate playable HLS M3U8 streaming manifest</span>
+python downloader.py --stream <span class="tok-str">"https://1024terabox.com/s/1Ay4FfmgooobETTVRHcf4mA"</span>
+
+<span class="tok-comment"># 3. List files in folder without initiating download</span>
+python downloader.py --list <span class="tok-str">"https://1024terabox.com/s/1Ay4FfmgooobETTVRHcf4mA"</span></div>
+      </div>
+    </section>
+
+    <!-- Authentication -->
+    <section class="docs-section" id="authentication">
+      <div class="eyebrow">Security &amp; Access Control</div>
+      <h2 class="section-heading">Authentication Strategy</h2>
+      <p>When <code>REQUIRE_API_KEY</code> is enabled (default in production), protected endpoints accept credentials via four distinct channels:</p>
+
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Header / Format</th>
+              <th>Best For</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="param-name">Custom Header</span></td>
+              <td><code>X-API-Key: my_secret_key</code></td>
+              <td>Standard backend-to-backend API integrations.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">Bearer Token</span></td>
+              <td><code>Authorization: Bearer &lt;key_or_firebase_jwt&gt;</code></td>
+              <td>Supports both static API keys and Google Firebase Client ID tokens.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">Query Parameter</span></td>
+              <td><code>?key=my_secret_key</code> or <code>?api_key=my_secret_key</code></td>
+              <td>Direct media player feeds (VLC, PotPlayer, Infuse, Kodi).</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">JSON Body</span></td>
+              <td><code>{ "key": "my_secret_key" }</code></td>
+              <td>POST requests to <code>/api/resolve</code> or admin control endpoints.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- HMAC URL Signing -->
+    <section class="docs-section" id="url-signing">
+      <div class="eyebrow">Cryptographic Signing</div>
+      <h2 class="section-heading">HMAC-Signed Media URLs</h2>
+      <p>To allow external video players and download managers to stream sub-resources without leaking your master <code>API_KEY</code>, all generated URLs include SHA256 HMAC signatures (<code>sig</code> + <code>exp</code>):</p>
+
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Resource Type</th>
+              <th>Default Free TTL</th>
+              <th>Premium Tier TTL</th>
+              <th>Environment Variable</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="param-name">Stream Segments (.ts)</span></td>
+              <td>30 Minutes (1,800s)</td>
+              <td>2 Hours (7,200s)</td>
+              <td><code>SIG_TTL_SEGMENT_FREE</code></td>
+            </tr>
+            <tr>
+              <td><span class="param-name">Direct Downloads</span></td>
+              <td>2 Hours (7,200s)</td>
+              <td>24 Hours (86,400s)</td>
+              <td><code>SIG_TTL_DOWNLOAD_FREE</code></td>
+            </tr>
+            <tr>
+              <td><span class="param-name">HLS Manifests (.m3u8)</span></td>
+              <td>24 Hours (86,400s)</td>
+              <td>30 Days (2,592,000s)</td>
+              <td><code>SIG_TTL_MANIFEST_FREE</code></td>
+            </tr>
+            <tr>
+              <td><span class="param-name">Video Thumbnails</span></td>
+              <td>24 Hours (86,400s)</td>
+              <td>30 Days (2,592,000s)</td>
+              <td><code>SIG_TTL_THUMBNAIL_FREE</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Endpoint: /api/resolve -->
+    <section class="docs-section" id="ep-resolve">
+      <div class="eyebrow">Endpoint Reference</div>
+      
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="http-badge post">POST</span>
+          <span class="endpoint-path">/api/resolve</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">API Key Required</span>
+        </div>
+      </div>
+
+      <p>Resolves a Terabox share link, bypasses captcha/token checks, and returns signed download URLs and HLS streaming manifests.</p>
+
+      <h3 class="sub-heading">Query Parameters</h3>
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Type</th>
+              <th>Requirement</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="param-name">url</span></td>
+              <td><span class="type-pill">string</span></td>
+              <td><span class="req-pill">Required</span></td>
+              <td>Full Terabox share URL (e.g. <code>https://1024terabox.com/s/...</code>). Also accepts <code>link</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">mode</span></td>
+              <td><span class="type-pill">string</span></td>
+              <td><span class="opt-pill">Optional</span></td>
+              <td><code>download</code> (default), <code>stream</code>, or <code>list</code>. Aliased as <code>action</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">wait</span></td>
+              <td><span class="type-pill">boolean</span></td>
+              <td><span class="opt-pill">Optional</span></td>
+              <td>When <code>true</code> or <code>1</code>, blocks and retries while video transcoding is pending. Default: <code>false</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="sub-heading">Example Response (200 OK)</h3>
+      <div class="code-window">
+        <div class="code-window-header">
+          <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--brand);">application/json</span>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content">{
+  <span class="tok-key">"status"</span>: <span class="tok-str">"success"</span>,
+  <span class="tok-key">"title"</span>: <span class="tok-str">"/2026-10-05 20-47/sample_video.mp4"</span>,
+  <span class="tok-key">"share_id"</span>: <span class="tok-num">1068189441752</span>,
+  <span class="tok-key">"uk"</span>: <span class="tok-num">81365178281431</span>,
+  <span class="tok-key">"files"</span>: [
+    {
+      <span class="tok-key">"filename"</span>: <span class="tok-str">"sample_video.mp4"</span>,
+      <span class="tok-key">"size_bytes"</span>: <span class="tok-num">2485125</span>,
+      <span class="tok-key">"size_mb"</span>: <span class="tok-num">2.37</span>,
+      <span class="tok-key">"fs_id"</span>: <span class="tok-str">"364574501226406"</span>,
+      <span class="tok-key">"transfer_status"</span>: <span class="tok-str">"success"</span>,
+      <span class="tok-key">"dlink"</span>: <span class="tok-str">"http://127.0.0.1:5000/api/download?surl=...&fs_id=364574501226406&sig=7a8b...&exp=1728200000"</span>,
+      <span class="tok-key">"stream_url"</span>: <span class="tok-str">"http://127.0.0.1:5000/api/stream/manifest?surl=...&fs_id=364574501226406&sig=c19f...&exp=1728280000"</span>,
+      <span class="tok-key">"stream_ready"</span>: <span class="tok-bool">true</span>,
+      <span class="tok-key">"thumbnails"</span>: {
+        <span class="tok-key">"url1"</span>: <span class="tok-str">"http://127.0.0.1:5000/api/thumbnail?surl=...&size_type=url1&sig=..."</span>,
+        <span class="tok-key">"url3"</span>: <span class="tok-str">"http://127.0.0.1:5000/api/thumbnail?surl=...&size_type=url3&sig=..."</span>
+      },
+      <span class="tok-key">"path"</span>: <span class="tok-str">"/cloudvids/sample_video.mp4"</span>,
+      <span class="tok-key">"is_directory"</span>: <span class="tok-bool">false</span>,
+      <span class="tok-key">"error"</span>: <span class="tok-bool">null</span>
+    }
+  ]
+}</div>
+      </div>
+    </section>
+
+    <!-- Endpoint: /api/stream/manifest -->
+    <section class="docs-section" id="ep-manifest">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="endpoint-path">/api/stream/manifest</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">Signed or API Key</span>
+        </div>
+      </div>
+      <p>Aliases: <code>/api/stream/playlist.m3u8</code>. Returns an adaptive bitrate HLS manifest. Media segment paths within the manifest are rewritten to pass through TeraBridge's signed proxy.</p>
+
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Type</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="param-name">surl</span></td>
+              <td><span class="type-pill">string</span></td>
+              <td>Terabox share slug (e.g. <code>1Ay4FfmgooobETTVRHcf4mA</code>) or full URL.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">fs_id</span></td>
+              <td><span class="type-pill">string</span></td>
+              <td>Specific file ID inside the share. Optional if folder contains only 1 video.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">quality</span></td>
+              <td><span class="type-pill">string</span></td>
+              <td>Target resolution: <code>1080p</code>, <code>720p</code>, <code>480p</code>, <code>360p</code>. Omit for adaptive master playlist.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Endpoint: /api/download -->
+    <section class="docs-section" id="ep-download">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="endpoint-path">/api/download</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">Signed or API Key</span>
+        </div>
+      </div>
+      <p>Proxies binary downloads directly from Terabox upstream storage. Supports <code>Range</code> requests (206 Partial Content) for resumable downloads and download managers.</p>
+    </section>
+
+    <!-- Endpoint: /api/stream/segment -->
+    <section class="docs-section" id="ep-segment">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="endpoint-path">/api/stream/segment</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">HMAC Signed</span>
+        </div>
+      </div>
+      <p>Aliases: <code>/api/stream/segment.ts</code>. Delivers video segments. When <code>REDIRECT_SEGMENTS=true</code>, issues an immediate HTTP 307 redirect directly to Baidu/Terabox CDN edge, saving container egress bandwidth.</p>
+    </section>
+
+    <!-- Endpoint: /api/thumbnail -->
+    <section class="docs-section" id="ep-thumbnail">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="endpoint-path">/api/thumbnail</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">HMAC Signed</span>
+        </div>
+      </div>
+      <p>Proxies image thumbnails. Includes SSRF domain guards restricting upstream fetch to authorized <code>*.terabox.com</code> and <code>*.baidupcs.com</code> hosts.</p>
+    </section>
+
+    <!-- Endpoint: /api/stats -->
+    <section class="docs-section" id="ep-stats">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="endpoint-path">/api/stats</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge" style="color: var(--accent-amber); border-color: rgba(245, 158, 11, 0.3);">Admin Only</span>
+        </div>
+      </div>
+      <p>Provides system telemetry: cache hit ratio, rate-limiter state, session token health status, and active account pool rotation.</p>
+    </section>
+
+    <!-- Endpoint: /api/admin/config -->
+    <section class="docs-section" id="ep-admin">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="http-badge post">POST</span>
+          <span class="endpoint-path">/api/admin/config</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge" style="color: var(--accent-amber); border-color: rgba(245, 158, 11, 0.3);">Admin Only</span>
+        </div>
+      </div>
+      <p>Dynamically inspect or register new Terabox accounts into the Redis account pool without restarting or redeploying the service container.</p>
+    </section>
+
+    <!-- Endpoint: /api/cron/validate -->
+    <section class="docs-section" id="ep-cron">
+      <div class="endpoint-header-card">
+        <div class="endpoint-signature">
+          <span class="http-badge get">GET</span>
+          <span class="http-badge post">POST</span>
+          <span class="endpoint-path">/api/cron/validate</span>
+        </div>
+        <div class="endpoint-meta">
+          <span class="auth-badge">Cron Secret</span>
+        </div>
+      </div>
+      <p>Session keep-alive ping. Checks cookie validity against Terabox. If expired, automatically fails over to the next healthy account and dispatches an alert to <code>NOTIFICATION_WEBHOOK_URL</code>.</p>
+    </section>
+
+    <!-- Architecture Pipeline -->
+    <section class="docs-section" id="architecture">
+      <div class="eyebrow">Internals</div>
+      <h2 class="section-heading">Request Execution Pipeline</h2>
+      <p>Every inbound resolve request traverses a multi-tiered acceleration pipeline:</p>
+
+      <div class="pipeline-diagram">
+        <div class="pipeline-flow">
+          <div class="pipeline-node">
+            <div class="pipeline-node-name">Rate Limiter</div>
+            <div class="pipeline-node-sub">Per-IP Sliding Window</div>
+          </div>
+          <div class="pipeline-connector">→</div>
+          <div class="pipeline-node active">
+            <div class="pipeline-node-name">LRU / Redis Cache</div>
+            <div class="pipeline-node-sub">X-Cache: HIT</div>
+          </div>
+          <div class="pipeline-connector">→</div>
+          <div class="pipeline-node">
+            <div class="pipeline-node-name">Single Flight</div>
+            <div class="pipeline-node-sub">Collapses Bursts</div>
+          </div>
+          <div class="pipeline-connector">→</div>
+          <div class="pipeline-node">
+            <div class="pipeline-node-name">Async HTTPX</div>
+            <div class="pipeline-node-sub">Terabox Upstream</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment Variables -->
+    <section class="docs-section" id="environment-variables">
+      <div class="eyebrow">Configuration Reference</div>
+      <h2 class="section-heading">Environment Variables</h2>
+
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Variable</th>
+              <th>Default</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="param-name">TERABOX_COOKIE</span></td>
+              <td><code>unset</code></td>
+              <td><strong>Primary credential.</strong> Full cookie string (must contain <code>ndus=...; PANWEB=1</code>).</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">API_KEY</span></td>
+              <td><code>None</code></td>
+              <td>Master secret key for securing API endpoints.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">REQUIRE_API_KEY</span></td>
+              <td><code>auto</code></td>
+              <td>Set to <code>0</code> or <code>false</code> to disable auth during local debugging.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">HMAC_SECRET</span></td>
+              <td><code>API_KEY</code></td>
+              <td>Secret for signing time-limited proxy URLs.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">CACHE_TTL</span></td>
+              <td><code>60</code></td>
+              <td>Cache retention TTL in seconds for resolved link payloads.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">RATE_LIMIT_RPM</span></td>
+              <td><code>30</code></td>
+              <td>Maximum requests per minute per IP address.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">REDIRECT_SEGMENTS</span></td>
+              <td><code>false</code></td>
+              <td>Return HTTP 307 redirects to CDN for <code>.ts</code> segments. Cuts egress ~90%.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">UPSTASH_REDIS_REST_URL</span></td>
+              <td><code>unset</code></td>
+              <td>Upstash Redis URL for distributed caching, rate-limiting, and account pools.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">UPSTASH_REDIS_REST_TOKEN</span></td>
+              <td><code>unset</code></td>
+              <td>Upstash Redis authentication token.</td>
+            </tr>
+            <tr>
+              <td><span class="param-name">NOTIFICATION_WEBHOOK_URL</span></td>
+              <td><code>unset</code></td>
+              <td>Discord or Slack incoming webhook for session expiration alerts.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Benchmarking & Testing -->
+    <section class="docs-section" id="benchmarking">
+      <div class="eyebrow">Performance Verification</div>
+      <h2 class="section-heading">Testing &amp; Load Benchmarks</h2>
+      <p>The codebase includes both automated unit/integration suites and an asynchronous load tester:</p>
+
+      <div class="code-window">
+        <div class="code-window-header">
+          <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);">Test &amp; Benchmark Commands</span>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content"><span class="tok-comment"># 1. Run all 38 unit & integration tests</span>
+python -m unittest test_api.py
+
+<span class="tok-comment"># 2. Run concurrent load testing (50 concurrent workers, 200 requests)</span>
+python load_test.py --api-key YOUR_KEY -c 50 -n 200
+
+<span class="tok-comment"># 3. Sustained stress test (60 seconds continuous load)</span>
+python load_test.py --api-key YOUR_KEY -c 30 -d 60</div>
+      </div>
+    </section>
+
+    <!-- Deployment: Railway -->
+    <section class="docs-section" id="deploy-railway">
+      <div class="eyebrow">Cloud Deployment</div>
+      <h2 class="section-heading">Deploy to Railway</h2>
+      <p>Railway uses the repository's <code>railway.toml</code> and multi-stage <code>Dockerfile</code> automatically:</p>
+      <ol>
+        <li>Push this repository to your GitHub account.</li>
+        <li>In Railway Dashboard: <strong>New Project → Deploy from GitHub repo</strong>.</li>
+        <li>In the service <strong>Variables</strong> tab, set <code>TERABOX_COOKIE</code>, <code>API_KEY</code>, and <code>REDIRECT_SEGMENTS=true</code>.</li>
+        <li>Railway auto-provisions the container and binds <code>PORT</code> automatically.</li>
+      </ol>
+    </section>
+
+    <!-- Deployment: Render -->
+    <section class="docs-section" id="deploy-render">
+      <h2 class="section-heading">Deploy to Render.com</h2>
+      <p>Render uses the included <code>render.yaml</code> Blueprint with free-tier tuning pre-configured:</p>
+      <ol>
+        <li>Navigate to <strong>Render Dashboard → New + → Blueprint</strong>.</li>
+        <li>Connect your repository. Render automatically generates the service with a secure randomized <code>API_KEY</code>.</li>
+        <li>In the <strong>Environment</strong> tab, populate <code>TERABOX_COOKIE</code>.</li>
+      </ol>
+    </section>
+
+    <!-- Deployment: Vercel -->
+    <section class="docs-section" id="deploy-vercel">
+      <h2 class="section-heading">Deploy to Vercel (Serverless)</h2>
+      <div class="code-window">
+        <div class="code-window-header">
+          <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);">Vercel CLI</span>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content">npm i -g vercel
+vercel --prod</div>
+      </div>
+      <p>Configure <code>API_KEY</code> and <code>TERABOX_COOKIE</code> in Project Settings → Environment Variables. Connect Upstash Redis for distributed cache persistence across serverless invocations.</p>
+    </section>
+
+    <!-- Deployment: Docker -->
+    <section class="docs-section" id="deploy-docker">
+      <h2 class="section-heading">Docker &amp; Compose</h2>
+      <div class="code-window">
+        <div class="code-window-header">
+          <span style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);">Docker Commands</span>
+          <button class="copy-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            Copy
+          </button>
+        </div>
+        <div class="code-content"><span class="tok-comment"># Build and run container</span>
+docker build -t terabridge-api .
+docker run -d -p 8000:8000 --env-file .env terabridge-api
+
+<span class="tok-comment"># Or run via docker-compose</span>
+docker-compose up --build -d</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Right Column: Table of Contents & Resources -->
+  <aside class="docs-toc">
+    <div class="toc-title">On this page</div>
+    <ul class="toc-list">
+      <li class="toc-item"><a href="#overview" class="toc-link active">Introduction</a></li>
+      <li class="toc-item"><a href="#interactive-sandbox" class="toc-link">Request Sandbox</a></li>
+      <li class="toc-item"><a href="#features" class="toc-link">Core Features</a></li>
+      <li class="toc-item"><a href="#quickstart" class="toc-link">Quick Start</a></li>
+      <li class="toc-item"><a href="#cli" class="toc-link">CLI Usage</a></li>
+      <li class="toc-item"><a href="#authentication" class="toc-link">Authentication</a></li>
+      <li class="toc-item"><a href="#url-signing" class="toc-link">HMAC URL Signing</a></li>
+      <li class="toc-item"><a href="#ep-resolve" class="toc-link">GET /api/resolve</a></li>
+      <li class="toc-item"><a href="#ep-manifest" class="toc-link">GET /api/stream/manifest</a></li>
+      <li class="toc-item"><a href="#ep-download" class="toc-link">GET /api/download</a></li>
+      <li class="toc-item"><a href="#ep-stats" class="toc-link">GET /api/stats</a></li>
+      <li class="toc-item"><a href="#architecture" class="toc-link">Pipeline Architecture</a></li>
+      <li class="toc-item"><a href="#environment-variables" class="toc-link">Environment Variables</a></li>
+      <li class="toc-item"><a href="#benchmarking" class="toc-link">Benchmarking</a></li>
+      <li class="toc-item"><a href="#deploy-railway" class="toc-link">Deploy to Railway</a></li>
+    </ul>
+
+    <div class="toc-community">
+      <div class="toc-title">Resources</div>
+      <a href="https://github.com/saahiyo-cloud/TeraBridge-api" target="_blank" rel="noopener" class="toc-community-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub Repository
+      </a>
+      <a href="https://github.com/saahiyo-cloud/TeraBridge-api/issues" target="_blank" rel="noopener" class="toc-community-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Report an Issue
+      </a>
+    </div>
+  </aside>
+
+</div>
+
+<!-- Command Palette Search Modal -->
+<div class="search-modal-backdrop" id="search-modal">
+  <div class="search-modal">
+    <div class="search-modal-input-wrap">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search-modal-input" class="search-modal-input" placeholder="Type a command, section, or endpoint...">
+      <span class="kbd">ESC</span>
+    </div>
+    <div class="search-modal-results" id="search-modal-results">
+      <!-- Injected by script.js -->
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
