@@ -769,11 +769,11 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
             if errno == 0:
                 if pctx.proxy_url:
                     proxy_manager.mark_success(pctx.proxy_url)
-            elif errno in (400141, 400810):
+            elif errno in (400141, 400810) or errno == -2:
                 if pctx.proxy_url:
                     proxy_manager.mark_failure(
                         pctx.proxy_url,
-                        reason=f"TeraBox WAF flagged (errno {errno}: {res.get('error', '')})",
+                        reason=f"Proxy failure (errno {errno}: {res.get('error', '')})",
                         cooldown_seconds=300.0,
                     )
             return res
