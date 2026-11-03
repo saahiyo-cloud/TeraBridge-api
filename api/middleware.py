@@ -241,3 +241,40 @@ class LogQueryTruncateMiddleware:
                         scope["query_string"] = original_qs
                     return
         await self.app(scope, receive, send)
+
+
+class AnalyticsMetricsMiddleware:
+    """
+    Lightweight ASGI middleware that tracks request volume, route distribution,
+    HTTP status codes, and latency in api.metrics.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start_time = time.time()
+        status_code = 200
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            path = scope.get("path", "")
+            method = scope.get("method", "GET")
+            duration_ms = (time.time() - start_time) * 1000.0
+            try:
+                from api.metrics import record_request
+                record_request(path, method, status_code, duration_ms)
+            except Exception:
+                pass
+

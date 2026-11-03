@@ -515,6 +515,11 @@ class ProxyPoolManager:
                 int(cooldown_seconds),
                 reason,
             )
+            try:
+                from api.metrics import record_event
+                record_event("proxy_quarantine", f"Proxy {mask_proxy(proxy_url)} quarantined for {int(cooldown_seconds)}s: {reason}", level="warning")
+            except Exception:
+                pass
             # Sync to Redis asynchronously or in memory
             self.save_to_redis()
 

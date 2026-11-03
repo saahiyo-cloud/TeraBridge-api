@@ -111,7 +111,13 @@
       <div class="py-2.5 flex items-center justify-between gap-4 flex-wrap sm:flex-nowrap">
         <!-- Navigation Tabs (Pill Switcher) -->
         <nav class="flex items-center gap-1 bg-slate-900/90 border border-white/10 rounded-xl p-1 text-xs flex-shrink-0">
-          <button id="tabFilesBtn" onclick="switchTab('files')" class="px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2">
+          <button id="tabAnalyticsBtn" onclick="switchTab('analytics')" class="px-3.5 py-1.5 rounded-lg font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+            <span>Analytics & Monitoring</span>
+          </button>
+          <button id="tabFilesBtn" onclick="switchTab('files')" class="px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
             </svg>
@@ -121,17 +127,24 @@
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
             </svg>
-            <span>Accounts Pool (<span id="accCountBadge">0</span>)</span>
+            <span>Accounts & Proxies (<span id="accCountBadge">0</span>)</span>
           </button>
         </nav>
 
-        <!-- Account selector dropdown -->
-        <div id="accountSelectWrapper" class="flex items-center gap-2 bg-slate-900/90 border border-white/10 hover:border-white/20 rounded-xl px-3 py-1.5 text-xs transition flex-shrink-0">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-pulse"></span>
-          <span class="text-slate-400 font-medium">Viewing Account:</span>
-          <select id="accountSelect" onchange="onAccountChange()" class="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] truncate">
-            <option value="" class="bg-slate-900">Active Account</option>
-          </select>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <!-- Auto-Refresh Toggle -->
+          <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-slate-900/90 text-slate-300 hover:text-white text-xs font-medium transition">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span id="autoRefreshText">Auto (10s)</span>
+          </button>
+          <!-- Account selector dropdown -->
+          <div id="accountSelectWrapper" class="hidden flex items-center gap-2 bg-slate-900/90 border border-white/10 hover:border-white/20 rounded-xl px-3 py-1.5 text-xs transition flex-shrink-0">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-pulse"></span>
+            <span class="text-slate-400 font-medium">Viewing Account:</span>
+            <select id="accountSelect" onchange="onAccountChange()" class="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] truncate">
+              <option value="" class="bg-slate-900">Active Account</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -141,8 +154,168 @@
   <!-- Main Container -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
 
+    <!-- Analytics & Monitoring View (Tab 0 - Active by Default) -->
+    <div id="analyticsView" class="space-y-6">
+      <!-- 4 Top KPI Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- KPI 1: System Health & Uptime -->
+        <div class="glass-card rounded-2xl p-4 border border-emerald-500/20 bg-slate-900/60 flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">System Status</span>
+            <span class="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              ONLINE
+            </span>
+          </div>
+          <div class="my-3">
+            <div id="statUptime" class="text-xl font-bold font-mono text-white">--</div>
+            <p class="text-[11px] text-slate-400 mt-0.5">Instance Uptime</p>
+          </div>
+          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Redis Latency:</span>
+            <span id="statRedisPing" class="text-emerald-400 font-semibold">Connected (~2ms)</span>
+          </div>
+        </div>
+
+        <!-- KPI 2: Traffic & Throughput -->
+        <div class="glass-card rounded-2xl p-4 border border-cyan-500/20 bg-slate-900/60 flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Traffic</span>
+            <span id="statSuccessRate" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">100% OK</span>
+          </div>
+          <div class="my-3">
+            <div id="statTotalRequests" class="text-2xl font-bold font-mono text-white">0</div>
+            <p class="text-[11px] text-slate-400 mt-0.5">API Requests Served</p>
+          </div>
+          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Avg Latency:</span>
+            <span id="statAvgLatency" class="text-cyan-400 font-semibold">-- ms</span>
+          </div>
+        </div>
+
+        <!-- KPI 3: Cache & Offload -->
+        <div class="glass-card rounded-2xl p-4 border border-indigo-500/20 bg-slate-900/60 flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cache Efficiency</span>
+            <span id="statCacheHitRate" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">--% Hit Rate</span>
+          </div>
+          <div class="my-3">
+            <div id="statCacheHitsMisses" class="text-2xl font-bold font-mono text-white">0 / 0</div>
+            <p class="text-[11px] text-slate-400 mt-0.5">Hits vs Misses</p>
+          </div>
+          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Rate-Limit Blocks:</span>
+            <span id="statRateBlocks" class="text-amber-400 font-semibold">0</span>
+          </div>
+        </div>
+
+        <!-- KPI 4: Proxy & Account Fleet -->
+        <div class="glass-card rounded-2xl p-4 border border-teal-500/20 bg-slate-900/60 flex flex-col justify-between">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fleet Health</span>
+            <span id="statProxyHealthyBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/10 text-teal-300 border border-teal-500/20">-- Proxies</span>
+          </div>
+          <div class="my-3">
+            <div id="statFleetCounts" class="text-2xl font-bold font-mono text-white">--</div>
+            <p class="text-[11px] text-slate-400 mt-0.5">Healthy Proxies / Accounts</p>
+          </div>
+          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Pool Storage:</span>
+            <span id="statFleetStorage" class="text-teal-400 font-semibold">-- GB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Middle Grid: Route Distribution & Proxy Fleet Telemetry -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <!-- Left: Traffic & Route Distribution -->
+        <div class="lg:col-span-5 glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                <svg class="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                </svg>
+                <span>Traffic & Route Breakdown</span>
+              </h3>
+              <span id="statStatusCodes" class="text-[10px] font-mono text-slate-400"></span>
+            </div>
+
+            <div class="space-y-3" id="routeProgressBars">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between text-xs font-mono">
+            <div>
+              <span class="text-slate-500 block text-[10px]">HTTP 2xx (Success)</span>
+              <span id="statHttp2xx" class="text-emerald-400 font-bold">0</span>
+            </div>
+            <div>
+              <span class="text-slate-500 block text-[10px]">HTTP 4xx (Client)</span>
+              <span id="statHttp4xx" class="text-amber-400 font-bold">0</span>
+            </div>
+            <div>
+              <span class="text-slate-500 block text-[10px]">HTTP 5xx (Server)</span>
+              <span id="statHttp5xx" class="text-rose-400 font-bold">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Proxy Fleet Live Matrix -->
+        <div class="lg:col-span-7 glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                <svg class="w-4 h-4 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span>Proxy Fleet Real-Time Matrix</span>
+              </h3>
+              <p class="text-[11px] text-slate-400 mt-0.5">Round-robin balancing with automatic 5-min quarantine on blocks</p>
+            </div>
+            <button onclick="testAllProxiesFleet()" id="btnProbeFleet" class="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>Probe Fleet Now</span>
+            </button>
+          </div>
+
+          <div id="proxyFleetContainer" class="max-h-64 overflow-y-auto space-y-2 pr-1 text-xs">
+            <!-- Dynamic proxy cards -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: Live Operational Event & Incident Log -->
+      <div class="glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>Live System Events & Incident Feed</span>
+            </h3>
+            <p class="text-[11px] text-slate-400 mt-0.5">Real-time log of resolutions, quarantines, recoveries, and rotation events</p>
+          </div>
+          <div class="flex items-center gap-1.5 text-xs">
+            <button onclick="filterEvents('all')" id="evFilterAll" class="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-semibold border border-indigo-500/30 transition">All</button>
+            <button onclick="filterEvents('warning')" id="evFilterWarn" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition">Alerts</button>
+            <button onclick="filterEvents('success')" id="evFilterOk" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition">Resolves</button>
+          </div>
+        </div>
+
+        <div id="eventsLogContainer" class="max-h-72 overflow-y-auto space-y-2 pr-1 font-mono text-[11px]">
+          <!-- Dynamic event rows -->
+        </div>
+      </div>
+    </div>
+
     <!-- Files & Storage View (Tab 1) -->
-    <div id="filesView" class="space-y-6">
+    <div id="filesView" class="hidden space-y-6">
       <!-- Top Banner: Storage Quota & Quick Metrics -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
         <!-- Card 1: Storage Quota Bar -->
@@ -812,27 +985,356 @@
       }
     }
 
+    let currentActiveTab = 'analytics';
+    let autoRefreshTimer = null;
+    let autoRefreshActive = true;
+    let cachedEventsList = [];
+    let currentEventFilter = 'all';
+
     function switchTab(tab) {
+      currentActiveTab = tab;
+      const analyticsView = document.getElementById('analyticsView');
       const filesView = document.getElementById('filesView');
       const accountsView = document.getElementById('accountsView');
+
+      const tabAnalyticsBtn = document.getElementById('tabAnalyticsBtn');
       const tabFilesBtn = document.getElementById('tabFilesBtn');
       const tabAccountsBtn = document.getElementById('tabAccountsBtn');
       const accSelectWrap = document.getElementById('accountSelectWrapper');
 
-      if (tab === 'files') {
+      // Hide all views first
+      analyticsView.classList.add('hidden');
+      filesView.classList.add('hidden');
+      accountsView.classList.add('hidden');
+
+      // Reset button classes
+      const inactiveBtnClass = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
+      const activeCyanBtnClass = 'px-3.5 py-1.5 rounded-lg font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition flex items-center gap-2';
+      const activeEmeraldBtnClass = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
+
+      tabAnalyticsBtn.className = inactiveBtnClass;
+      tabFilesBtn.className = inactiveBtnClass;
+      tabAccountsBtn.className = inactiveBtnClass;
+
+      if (tab === 'analytics') {
+        analyticsView.classList.remove('hidden');
+        accSelectWrap.classList.add('hidden');
+        tabAnalyticsBtn.className = activeCyanBtnClass;
+        loadAnalytics();
+      } else if (tab === 'files') {
         filesView.classList.remove('hidden');
-        accountsView.classList.add('hidden');
         accSelectWrap.classList.remove('hidden');
-        tabFilesBtn.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
-        tabAccountsBtn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
+        tabFilesBtn.className = activeEmeraldBtnClass;
+        loadQuota();
         loadFiles();
       } else {
-        filesView.classList.add('hidden');
         accountsView.classList.remove('hidden');
         accSelectWrap.classList.add('hidden');
-        tabAccountsBtn.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
-        tabFilesBtn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
+        tabAccountsBtn.className = activeEmeraldBtnClass;
         loadAccounts();
+      }
+    }
+
+    function formatUptime(seconds) {
+      if (!seconds || seconds <= 0) return '0s';
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (d > 0) return `${d}d ${h}h ${m}m ${s}s`;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function timeAgo(epochSec) {
+      if (!epochSec) return 'never';
+      const diff = Math.floor(Date.now() / 1000 - epochSec);
+      if (diff < 5) return 'just now';
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    function toggleAutoRefresh() {
+      autoRefreshActive = !autoRefreshActive;
+      const btn = document.getElementById('autoRefreshBtn');
+      const text = document.getElementById('autoRefreshText');
+      if (autoRefreshActive) {
+        text.textContent = 'Auto (10s)';
+        btn.classList.remove('opacity-50');
+        showToast('Auto-refresh enabled (every 10s)');
+        startAutoRefresh();
+      } else {
+        text.textContent = 'Paused';
+        btn.classList.add('opacity-50');
+        showToast('Auto-refresh paused');
+        if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      }
+    }
+
+    function startAutoRefresh() {
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      autoRefreshTimer = setInterval(() => {
+        if (!autoRefreshActive) return;
+        if (currentActiveTab === 'analytics') {
+          loadAnalytics(true);
+        } else if (currentActiveTab === 'accounts') {
+          loadAccounts();
+        } else if (currentActiveTab === 'files') {
+          loadQuota();
+        }
+      }, 10000);
+    }
+
+    let proxyProbeResultsMap = {};
+
+    async function loadAnalytics(isSilent = false) {
+      try {
+        const res = await fetch('/api/admin/analytics', { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. System Health
+        const uptimeEl = document.getElementById('statUptime');
+        if (uptimeEl) uptimeEl.textContent = formatUptime(data.system?.uptime_seconds);
+
+        const redisEl = document.getElementById('statRedisPing');
+        if (redisEl) {
+          const lat = data.system?.redis?.latency_ms;
+          redisEl.textContent = lat !== null ? `Connected (${lat}ms)` : 'Connected';
+        }
+
+        // 2. Traffic
+        const traf = data.traffic || {};
+        const totalReqsEl = document.getElementById('statTotalRequests');
+        if (totalReqsEl) totalReqsEl.textContent = (traf.total_requests || 0).toLocaleString();
+
+        const succRateEl = document.getElementById('statSuccessRate');
+        if (succRateEl) {
+          const sRate = traf.success_rate_percent ?? 100;
+          succRateEl.textContent = `${sRate}% OK`;
+          succRateEl.className = sRate >= 95 
+            ? 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
+            : 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20';
+        }
+
+        const avgLatEl = document.getElementById('statAvgLatency');
+        if (avgLatEl) avgLatEl.textContent = traf.avg_latency_ms ? `${traf.avg_latency_ms} ms` : '< 50 ms';
+
+        // 3. Cache
+        const cacheLinks = data.cache?.links || {};
+        const cacheHitRateEl = document.getElementById('statCacheHitRate');
+        if (cacheHitRateEl) cacheHitRateEl.textContent = cacheLinks.hit_rate ? `${cacheLinks.hit_rate} Hit Rate` : '--';
+
+        const cacheHitsMissesEl = document.getElementById('statCacheHitsMisses');
+        if (cacheHitsMissesEl) {
+          cacheHitsMissesEl.textContent = `${(cacheLinks.hits || 0).toLocaleString()} / ${(cacheLinks.misses || 0).toLocaleString()}`;
+        }
+
+        const rateBlocksEl = document.getElementById('statRateBlocks');
+        if (rateBlocksEl) rateBlocksEl.textContent = (data.rate_limiter?.total_blocked || 0).toLocaleString();
+
+        // 4. Fleet
+        const proxies = data.proxies || { total: 0, healthy: 0 };
+        const accounts = data.accounts || { total: 0, healthy: 0 };
+        const fleetBadge = document.getElementById('statProxyHealthyBadge');
+        if (fleetBadge) fleetBadge.textContent = `${proxies.healthy}/${proxies.total} Proxies OK`;
+
+        const fleetCounts = document.getElementById('statFleetCounts');
+        if (fleetCounts) fleetCounts.textContent = `${proxies.healthy} Proxies • ${accounts.healthy} Accs`;
+
+        const fleetStorage = document.getElementById('statFleetStorage');
+        if (fleetStorage) {
+          const stor = data.storage || {};
+          fleetStorage.textContent = stor.used_gb ? `${stor.used_gb} GB (${stor.used_percent}%)` : 'Healthy';
+        }
+
+        // 5. Route Progress Bars
+        const routeContainer = document.getElementById('routeProgressBars');
+        if (routeContainer && traf.routes) {
+          const total = Math.max(traf.total_requests || 1, 1);
+          const routeMeta = [
+            { key: 'resolve', name: '/api/resolve (Link Metadata)', color: 'bg-emerald-500', barBg: 'from-emerald-500 to-teal-400' },
+            { key: 'stream', name: '/api/stream (HLS Segments)', color: 'bg-cyan-500', barBg: 'from-cyan-500 to-blue-500' },
+            { key: 'download', name: '/api/download (Direct Chunks)', color: 'bg-indigo-500', barBg: 'from-indigo-500 to-violet-500' },
+            { key: 'thumbnail', name: '/api/thumbnail (Media CDN)', color: 'bg-amber-500', barBg: 'from-amber-500 to-orange-400' },
+            { key: 'admin', name: '/api/admin & Management', color: 'bg-slate-400', barBg: 'from-slate-500 to-slate-400' },
+          ];
+
+          routeContainer.innerHTML = routeMeta.map(m => {
+            const count = traf.routes[m.key] || 0;
+            const pct = Math.min(100, (count / total * 100)).toFixed(1);
+            return `
+              <div>
+                <div class="flex items-center justify-between text-xs mb-1">
+                  <span class="text-slate-300 font-medium">${m.name}</span>
+                  <span class="font-mono text-slate-400">${count.toLocaleString()} <span class="text-[10px] text-slate-500">(${pct}%)</span></span>
+                </div>
+                <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-white/5">
+                  <div class="h-full rounded-full bg-gradient-to-r ${m.barBg} transition-all duration-500" style="width: ${pct}%"></div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // HTTP status codes
+        const statusEl = document.getElementById('statStatusCodes');
+        const st = traf.status_codes || {};
+        if (document.getElementById('statHttp2xx')) document.getElementById('statHttp2xx').textContent = (st['2xx'] || 0).toLocaleString();
+        if (document.getElementById('statHttp4xx')) document.getElementById('statHttp4xx').textContent = (st['4xx'] || 0).toLocaleString();
+        if (document.getElementById('statHttp5xx')) document.getElementById('statHttp5xx').textContent = (st['5xx'] || 0).toLocaleString();
+
+        // 6. Proxy Fleet Matrix
+        const proxyFleetContainer = document.getElementById('proxyFleetContainer');
+        if (proxyFleetContainer && proxies.proxies) {
+          if (proxies.proxies.length === 0) {
+            proxyFleetContainer.innerHTML = '<div class="text-center py-6 text-slate-500">No proxies configured in pool.</div>';
+          } else {
+            proxyFleetContainer.innerHTML = proxies.proxies.map(p => {
+              const isCooling = p.status === 'cooldown';
+              const probe = proxyProbeResultsMap[p.raw_url] || proxyProbeResultsMap[p.url];
+              const latBadge = probe ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono ${probe.status === 'healthy' ? 'text-teal-400 bg-teal-500/10' : 'text-rose-400 bg-rose-500/10'}">${probe.latency_ms}ms</span>` : '';
+
+              const badge = isCooling
+                ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">Cooldown (${p.cooldown_remaining}s)</span>`
+                : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Healthy</span>`;
+
+              const lastErr = p.last_error ? `<div class="text-[10px] text-amber-400/80 truncate mt-0.5" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</div>` : '';
+
+              return `
+                <div class="p-2.5 rounded-xl bg-slate-950/60 border border-white/5 hover:border-teal-500/30 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="w-2 h-2 rounded-full ${isCooling ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}"></span>
+                      <span class="font-mono text-xs text-white font-semibold truncate">${escapeQuotes(p.url)}</span>
+                      ${latBadge}
+                    </div>
+                    ${lastErr}
+                  </div>
+                  <div class="flex items-center gap-3 shrink-0">
+                    <div class="text-[11px] font-mono text-slate-400">
+                      <span class="text-emerald-400 font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-rose-400 font-semibold' : 'text-slate-500'}">${p.failure_count || 0}</span> err
+                    </div>
+                    ${badge}
+                  </div>
+                </div>
+              `;
+            }).join('');
+          }
+        }
+
+        // 7. Events Feed
+        cachedEventsList = data.events || [];
+        renderEventsFeed();
+
+      } catch (e) {
+        if (!isSilent) loggerError('Failed to load analytics: ' + e.message);
+      }
+    }
+
+    function renderEventsFeed() {
+      const container = document.getElementById('eventsLogContainer');
+      if (!container) return;
+
+      const filtered = cachedEventsList.filter(ev => {
+        if (currentEventFilter === 'warning') return ev.level === 'warning' || ev.level === 'error';
+        if (currentEventFilter === 'success') return ev.level === 'success';
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="text-center py-6 text-slate-500">No events recorded in this filter.</div>';
+        return;
+      }
+
+      container.innerHTML = filtered.map(ev => {
+        let badgeColor = 'bg-slate-800 text-slate-400 border-white/5';
+        let dotColor = 'bg-slate-400';
+        if (ev.level === 'success') {
+          badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+          dotColor = 'bg-emerald-400';
+        } else if (ev.level === 'warning') {
+          badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+          dotColor = 'bg-amber-400';
+        } else if (ev.level === 'error') {
+          badgeColor = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+          dotColor = 'bg-rose-400';
+        } else if (ev.type === 'proxy_probe') {
+          badgeColor = 'bg-teal-500/10 text-teal-400 border-teal-500/20';
+          dotColor = 'bg-teal-400';
+        }
+
+        return `
+          <div class="flex items-start justify-between gap-3 p-2 rounded-xl bg-slate-950/40 border border-white/5 hover:bg-slate-950/80 transition">
+            <div class="flex items-start gap-2.5 min-w-0">
+              <span class="w-1.5 h-1.5 rounded-full ${dotColor} mt-1.5 shrink-0"></span>
+              <div class="min-w-0">
+                <span class="text-slate-200 text-xs">${escapeQuotes(ev.message)}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeColor}">${ev.type || 'SYSTEM'}</span>
+              <span class="text-[10px] text-slate-500">${timeAgo(ev.timestamp)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function filterEvents(level) {
+      currentEventFilter = level;
+      const allBtn = document.getElementById('evFilterAll');
+      const warnBtn = document.getElementById('evFilterWarn');
+      const okBtn = document.getElementById('evFilterOk');
+
+      const activeClass = 'px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-semibold border border-indigo-500/30 transition';
+      const inactiveClass = 'px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition';
+
+      if (allBtn) allBtn.className = level === 'all' ? activeClass : inactiveClass;
+      if (warnBtn) warnBtn.className = level === 'warning' ? activeClass : inactiveClass;
+      if (okBtn) okBtn.className = level === 'success' ? activeClass : inactiveClass;
+
+      renderEventsFeed();
+    }
+
+    async function testAllProxiesFleet() {
+      const btn = document.getElementById('btnProbeFleet');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block mr-1">↻</span> Probing...`;
+      }
+      try {
+        const res = await fetch('/api/admin/proxies/test', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast(`Probed ${data.results?.length || 0} proxies successfully!`);
+          if (data.results) {
+            data.results.forEach(r => {
+              proxyProbeResultsMap[r.url] = r;
+            });
+          }
+          loadAnalytics(true);
+        } else {
+          showToast(data.message || 'Probe failed', true);
+        }
+      } catch (e) {
+        showToast('Probe error: ' + e.message, true);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = `
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span>Probe Fleet Now</span>
+          `;
+        }
       }
     }
 
@@ -1339,14 +1841,18 @@
     }
 
     function loadAll(forceRefresh = false) {
+      loadAnalytics(true);
       loadAccounts();
-      loadQuota(forceRefresh);
-      loadFiles(forceRefresh);
+      if (currentActiveTab === 'files') {
+        loadQuota(forceRefresh);
+        loadFiles(forceRefresh);
+      }
     }
 
     // Initial boot
     window.addEventListener('DOMContentLoaded', () => {
       loadAll();
+      startAutoRefresh();
     });
   </script>
 </body>

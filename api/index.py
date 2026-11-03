@@ -63,6 +63,7 @@ from api.config import (
 )
 from api.middleware import (
     ConfigRefreshMiddleware,
+    AnalyticsMetricsMiddleware,
     check_safe_redirect,
     set_config_loader,
 )
@@ -109,6 +110,11 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────
     _server_start = time.time()
     set_start_time(_server_start)
+    try:
+        from api.metrics import set_metrics_start_time
+        set_metrics_start_time(_server_start)
+    except Exception:
+        pass
 
     # Inject the shared proxy client into the routes that stream bytes
     stream_set_client(_proxy_client)
@@ -156,6 +162,7 @@ app = FastAPI(title="TeraBridge API", version="2.0.0", lifespan=lifespan)
 # Starlette wraps middleware inside-out, so the last add_middleware() call
 # becomes the outermost layer.  We want: GZip → CORS → ConfigRefresh.
 
+app.add_middleware(AnalyticsMetricsMiddleware)
 app.add_middleware(ConfigRefreshMiddleware)
 
 _allow_origins = list(ALLOWED_ORIGINS) if ALLOWED_ORIGINS else ["*"]

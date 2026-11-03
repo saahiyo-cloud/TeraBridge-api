@@ -430,5 +430,31 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(pool.get_healthy_count(), 2)
 
 
+    # 42. Analytics & Monitoring API Endpoints
+    def test_42_analytics_and_observability_endpoints(self):
+        # 401 without auth
+        resp_unauth = self.make_request("GET", "/api/admin/analytics")
+        self.assertEqual(resp_unauth.status_code, 401)
+        
+        # 200 with auth
+        headers = {"X-API-Key": API_KEY}
+        resp = self.make_request("GET", "/api/admin/analytics", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("status"), "online")
+        self.assertIn("system", data)
+        self.assertIn("traffic", data)
+        self.assertIn("cache", data)
+        self.assertIn("proxies", data)
+        self.assertIn("accounts", data)
+        self.assertIn("events", data)
+        
+        # Verify /api/stats includes traffic telemetry
+        resp_stats = self.make_request("GET", "/api/stats", headers=headers)
+        self.assertEqual(resp_stats.status_code, 200)
+        stats_data = resp_stats.json()
+        self.assertIn("traffic", stats_data)
+
+
 if __name__ == "__main__":
     unittest.main()

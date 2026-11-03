@@ -115,6 +115,8 @@ async def stats(request: Request):
             pass
 
     from api.config import FIREBASE_PROJECT_ID
+    from api.metrics import get_analytics_summary
+    analytics = get_analytics_summary()
     return {
         "status":              "online",
         "uptime_seconds":      uptime,
@@ -124,6 +126,69 @@ async def stats(request: Request):
         "rate_limiter":        rate_limiter.stats(),
         "firebase_project_id": FIREBASE_PROJECT_ID,
         "recent_auth_errors":  get_recent_auth_errors(),
+        "traffic":             analytics.get("traffic"),
+    }
+
+
+# ─── /api/admin/analytics ─────────────────────────────────────────────
+
+@router.get("/api/admin/analytics")
+async def admin_analytics(request: Request):
+    if not await check_admin(request):
+        return JSONResponse(
+            {"status": "error", "message": "Unauthorized: Admin API key required."},
+            status_code=401,
+        )
+    from api.metrics import get_analytics_summary
+    return get_analytics_summary()
+
+
+# ─── /api/admin/proxies/test ──────────────────────────────────────────
+
+@router.post("/api/admin/proxies/test")
+async def test_all_proxies(request: Request):
+    if not await check_admin(request):
+        return JSONResponse(
+            {"status": "error", "message": "Unauthorized: Admin API key required."},
+            status_code=401,
+        )
+    from api.proxy_manager import proxy_manager, mask_proxy
+    from api.metrics import record_event
+
+    results = []
+    summary = proxy_manager.get_summary()
+    proxies = summary.get("proxies", [])
+
+    async def _probe(p):
+        raw_url = p.get("raw_url")
+        masked = p.get("url") or mask_proxy(raw_url)
+        t0 = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=10.0, proxy=raw_url) as client:
+                r = await client.get("https://dm.1024terabox.com/main", follow_redirects=True)
+                lat = round((time.time() - t0) * 1000, 1)
+                if r.status_code == 200:
+                    proxy_manager.mark_success(raw_url)
+                    return {"url": masked, "status": "healthy", "latency_ms": lat, "http_status": 200}
+                elif r.status_code in (402, 407):
+                    proxy_manager.mark_failure(raw_url, reason=f"HTTP {r.status_code} proxy authentication failure")
+                    return {"url": masked, "status": "cooldown", "latency_ms": lat, "http_status": r.status_code}
+                else:
+                    return {"url": masked, "status": "warning", "latency_ms": lat, "http_status": r.status_code}
+        except Exception as exc:
+            lat = round((time.time() - t0) * 1000, 1)
+            err_msg = str(exc)
+            proxy_manager.mark_failure(raw_url, reason=f"Probe timeout/error: {err_msg[:60]}")
+            return {"url": masked, "status": "error", "latency_ms": lat, "error": err_msg[:80]}
+
+    if proxies:
+        results = await asyncio.gather(*[_probe(p) for p in proxies])
+
+    record_event("proxy_probe", f"Probed {len(results)} proxies in fleet", level="info")
+    return {
+        "status": "success",
+        "results": results,
+        "proxy_pool": proxy_manager.get_summary(),
     }
 
 

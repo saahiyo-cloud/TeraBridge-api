@@ -172,6 +172,11 @@ async def resolve_link_with_retry(
                 active_id, reason,
             )
             mark_account_unhealthy(active_id, reason)
+            try:
+                from api.metrics import record_event
+                record_event("account_unhealthy", f"Account '{active_id}' marked unhealthy: {reason}", level="error")
+            except Exception:
+                pass
             _load_config_from_redis()
             if attempt < max_retries - 1:
                 logger.info("Retrying with rotated account: %s", _current_active_account_id)
@@ -555,6 +560,11 @@ async def resolve(request: Request):
 
         if not is_transcoding:
             cache.put(link, action, wait_for_transcoding, response_data)
+            try:
+                from api.metrics import record_event
+                record_event("resolve_success", f"Resolved: {res.get('title', 'Unknown shared file')}", level="success")
+            except Exception:
+                pass
 
         return JSONResponse(
             response_data,
