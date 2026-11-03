@@ -43,6 +43,24 @@ def set_metrics_start_time(st: float) -> None:
     _start_time = st
 
 
+def reset_metrics() -> None:
+    """Reset in-memory and Redis metrics counters for a clean fresh tracking baseline."""
+    global _local_counters, _max_seen_counters, _latency_samples, _local_events, _start_time
+    _start_time = time.time()
+    with _pending_lock:
+        _pending_increments.clear()
+    _local_counters.clear()
+    _max_seen_counters.clear()
+    _latency_samples.clear()
+    _local_events.clear()
+    if redis_client:
+        try:
+            redis_client.delete(REDIS_METRICS_HASH)
+            redis_client.delete(REDIS_EVENTS_KEY)
+        except Exception as exc:
+            logger.warning("Failed to reset Redis metrics: %s", exc)
+
+
 def _exec_pipeline(pipe: Any) -> None:
     """
     Safely execute a pipeline across upstash-redis, redis-py, or mock clients.

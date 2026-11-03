@@ -349,10 +349,18 @@
             </h3>
             <p class="text-[11px] text-white/45 mt-0.5">Real-time log of resolutions, quarantines, recoveries, and rotation events</p>
           </div>
-          <div class="flex items-center gap-1.5 text-xs bg-white/[0.06] p-1 rounded-xl border border-white/[0.08]">
-            <button onclick="filterEvents('all')" id="evFilterAll" class="px-3 py-1 rounded-lg bg-white/[0.14] text-white font-medium border border-white/[0.12] transition">All</button>
-            <button onclick="filterEvents('warning')" id="evFilterWarn" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Alerts</button>
-            <button onclick="filterEvents('success')" id="evFilterOk" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Resolves</button>
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1 text-xs bg-white/[0.06] p-1 rounded-xl border border-white/[0.08]">
+              <button onclick="filterEvents('all')" id="evFilterAll" class="px-3 py-1 rounded-lg bg-white/[0.14] text-white font-medium border border-white/[0.12] transition">All</button>
+              <button onclick="filterEvents('warning')" id="evFilterWarn" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Alerts</button>
+              <button onclick="filterEvents('success')" id="evFilterOk" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Resolves</button>
+            </div>
+            <button onclick="resetTelemetryMetrics()" title="Reset historical traffic counters to fresh baseline" class="apple-btn-secondary px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 text-white/60 hover:text-white">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Reset Counters</span>
+            </button>
           </div>
         </div>
 
@@ -1382,6 +1390,25 @@
             <span>Probe Fleet Now</span>
           `;
         }
+      }
+    }
+
+    async function resetTelemetryMetrics() {
+      if (!confirm('Reset historical traffic and error counters to a fresh baseline?')) return;
+      try {
+        const res = await fetch('/api/admin/metrics/reset', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          showToast('Telemetry counters reset to 0');
+          loadAnalytics(true);
+        } else {
+          showToast(data.message || 'Failed to reset metrics', true);
+        }
+      } catch (e) {
+        showToast('Reset error: ' + e.message, true);
       }
     }
 

@@ -144,6 +144,19 @@ async def admin_analytics(request: Request):
     return get_analytics_summary()
 
 
+@router.post("/api/admin/metrics/reset")
+async def admin_reset_metrics(request: Request):
+    if not await check_admin(request):
+        return JSONResponse(
+            {"status": "error", "message": "Unauthorized: Admin API key required."},
+            status_code=401,
+        )
+    from api.metrics import reset_metrics, record_event
+    reset_metrics()
+    record_event("metrics_reset", "success", "Telemetry and traffic counters reset to fresh baseline by admin")
+    return {"status": "success", "message": "Telemetry metrics reset successfully"}
+
+
 # ─── /api/admin/proxies/test ──────────────────────────────────────────
 
 @router.post("/api/admin/proxies/test")
