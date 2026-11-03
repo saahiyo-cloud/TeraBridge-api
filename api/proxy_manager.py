@@ -230,13 +230,14 @@ class ProxyContext:
 # ─── Proxy Pool Manager ───────────────────────────────────────────────
 
 class ProxyPoolManager:
-    def __init__(self):
+    def __init__(self, persist_to_redis: bool = True):
         self._entries: list[ProxyEntry] = []
         self._clients: dict[str, httpx.AsyncClient] = {}
         self._client_loops: dict[str, asyncio.AbstractEventLoop] = {}
         self._rr_index: int = 0
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._persist_to_redis = persist_to_redis
 
     def get_total_count(self) -> int:
         return len(self._entries)
@@ -527,6 +528,8 @@ class ProxyPoolManager:
 
     def load_from_redis(self) -> None:
         """Load proxy pool state from Redis, with fallback to env vars."""
+        if not self._persist_to_redis:
+            return
         import os
         from api.redis_client import redis_client
 
@@ -585,6 +588,8 @@ class ProxyPoolManager:
 
     def save_to_redis(self) -> None:
         """Persist current proxy pool state to Redis."""
+        if not self._persist_to_redis:
+            return
         from api.redis_client import redis_client
         if not redis_client:
             return

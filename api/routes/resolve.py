@@ -129,12 +129,29 @@ async def resolve_link_with_retry(
             is_proxy_error = True
             reason = f"TeraBox WAF flagged proxy (errno {errno})"
         elif errno in (-1, -2):
-            if any(w in error_msg.lower() for w in ("proxy", "402", "407", "connecttimeout", "proxyerror", "connection refused", "timeout")):
+            is_transport = (
+                errno == -2
+                or any(w in error_msg.lower() for w in (
+                    "transport", "proxy", "402", "407", "connect", "timeout",
+                    "refused", "reset", "network", "remote", "connection", "socket", "empty"
+                ))
+                or error_msg.strip() in ("", "Failed to resolve session tokens:", "Failed to resolve session tokens")
+            )
+            is_cookie_expired = any(
+                w in error_msg.lower()
+                for w in ("cookie may be expired", "session cookie expired", "login required", "did not return bdstoken")
+            )
+
+            if is_transport or (not is_cookie_expired and proxy_manager.get_total_count() > 0):
                 is_proxy_error = True
                 reason = f"Proxy transport failure: {error_msg}"
-            else:
+            elif is_cookie_expired:
                 is_account_error = True
-                reason = f"Token resolution failed: {error_msg}" if errno == -1 else f"Share list query failed: {error_msg}"
+                reason = f"Account cookie expired: {error_msg}"
+            else:
+                # Do not ban accounts on ambiguous transient query failures
+                is_proxy_error = True
+                reason = f"Network transport failure: {error_msg}"
         elif errno in (-6, -9, 111):
             is_account_error = True
             reason = f"Session expired/invalid (errno {errno})"

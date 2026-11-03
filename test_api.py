@@ -37,6 +37,9 @@ class TestTeraBridgeAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not TEST_BASE_URL:
+            # Prevent local unit test suites from overwriting production Redis proxy pool
+            from api.proxy_manager import proxy_manager
+            proxy_manager._persist_to_redis = False
             cls.client = TestClient(app)
             print(f"🔧 Testing local FastAPI application in-process via TestClient...")
         else:
@@ -359,7 +362,7 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(masked, "http://aiepavhe:***@64.137.96.74:6641")
         
         # Test pool rotation
-        pool = ProxyPoolManager()
+        pool = ProxyPoolManager(persist_to_redis=False)
         pool.set_proxies([
             "64.137.96.74:6641:aiepavhe:6vonlhzxrt8y",
             "198.23.243.226:6361:aiepavhe:6vonlhzxrt8y",
@@ -412,7 +415,7 @@ class TestTeraBridgeAPI(unittest.TestCase):
         from api.proxy_manager import ProxyPoolManager
         import time
         
-        pool = ProxyPoolManager()
+        pool = ProxyPoolManager(persist_to_redis=False)
         pool.set_proxies(["http://user:pass@1.2.3.4:8080", "http://user:pass@5.6.7.8:8080"])
         
         # Quarantine the first proxy

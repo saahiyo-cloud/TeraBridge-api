@@ -248,3 +248,4 @@ def get_analytics_summary() -> dict[str, Any]:
         "storage": storage_summary,
         "events": get_recent_events(25),
     }
+

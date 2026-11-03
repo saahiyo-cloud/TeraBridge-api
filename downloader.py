@@ -143,7 +143,8 @@ async def validate_session_cookie(cookie_str):
                 return True, "Valid"
             return False, "bdstoken not found (session likely expired or invalid)"
     except Exception as e:
-        return False, f"Request failed: {str(e)}"
+        err_str = str(e) or type(e).__name__
+        return False, f"Transport failure: {err_str}"
 
 async def resolve_tokens_from_cookie(cookie_str):
     """
@@ -242,8 +243,12 @@ async def refresh_account_tokens():
                       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Referer": f"{BASE_API}/",
     }
-    response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, follow_redirects=True, timeout=20.0)
-    response.raise_for_status()
+    try:
+        response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, follow_redirects=True, timeout=20.0)
+        response.raise_for_status()
+    except Exception as exc:
+        err_msg = str(exc) or type(exc).__name__
+        raise httpx.TransportError(f"Network transport error reaching TeraBox: {err_msg}") from exc
     html = response.text
 
     bds_match = re.search(r'["\']bdstoken["\']?\s*[:=]\s*["\']([^"\']+)', html, re.IGNORECASE)
@@ -792,8 +797,11 @@ async def _resolve_link(link, action="d", wait_for_transcoding=False, quality=No
     # calls don't stomp each other's globals mid-request.
     try:
         bdstoken, jstoken, _ = await refresh_account_tokens()
+    except RuntimeError as e:
+        return {"errno": -1, "error": f"Session cookie expired: {e}"}
     except Exception as e:
-        return {"errno": -1, "error": f"Failed to resolve session tokens: {e}"}
+        err_msg = str(e) or type(e).__name__
+        return {"errno": -2, "error": f"Transport error resolving session tokens: {err_msg}"}
 
     try:
         surl = parse_surl(link)

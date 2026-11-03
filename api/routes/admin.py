@@ -651,14 +651,17 @@ async def cron_validate(request: Request):
                         accounts_checked += 1
                         is_valid, msg = await validate_session_cookie(cookie_val)
                         if not is_valid:
-                            mark_account_unhealthy(acc_id_str, reason=msg)
-                            accounts_invalidated.append((acc_id_str, msg))
-                            await send_webhook_alert(
-                                f"🚨 **TeraBox Account Expired!**\n"
-                                f"Account ID: `{acc_id_str}`\n"
-                                f"Reason: `{msg}`\n\n"
-                                f"Please refresh its cookie at `/api/admin/config`."
-                            )
+                            if any(w in msg.lower() for w in ("transport failure", "timeout", "network", "connect")):
+                                logger.warning("Account %s health check failed due to network/transport: %s (skipping invalidation)", acc_id_str, msg)
+                            else:
+                                mark_account_unhealthy(acc_id_str, reason=msg)
+                                accounts_invalidated.append((acc_id_str, msg))
+                                await send_webhook_alert(
+                                    f"🚨 **TeraBox Account Expired!**\n"
+                                    f"Account ID: `{acc_id_str}`\n"
+                                    f"Reason: `{msg}`\n\n"
+                                    f"Please refresh its cookie at `/api/admin/config`."
+                                )
 
             # Force-rotate if the active account was just invalidated
             active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
