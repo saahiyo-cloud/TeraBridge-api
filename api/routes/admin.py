@@ -231,15 +231,56 @@ async def _handle_config_post(request: Request):
     except Exception:
         data = {}
 
-    # Handle dynamic outbound proxy setting update
+    # Handle proxy pool operations
+    if "outbound_proxies" in data:
+        from api.proxy_manager import proxy_manager
+        from downloader import set_outbound_proxy
+        count = proxy_manager.set_proxies(data.get("outbound_proxies"))
+        next_p = proxy_manager.get_next_proxy()
+        set_outbound_proxy(next_p.url if next_p else None)
+        if not data.get("account_id") and not data.get("cookie") and not data.get("ndus") and not data.get("action"):
+            return {
+                "status": "success",
+                "message": f"Proxy pool updated with {count} active proxies.",
+                "proxy_pool": proxy_manager.get_summary(),
+                "outbound_proxy": mask_proxy_url(next_p.url if next_p else None),
+            }
+
+    if "add_proxies" in data:
+        from api.proxy_manager import proxy_manager
+        from downloader import set_outbound_proxy
+        added = proxy_manager.add_proxies(data.get("add_proxies"))
+        next_p = proxy_manager.get_next_proxy()
+        set_outbound_proxy(next_p.url if next_p else None)
+        return {
+            "status": "success",
+            "message": f"Added {added} proxies to pool (total: {proxy_manager.get_total_count()}).",
+            "proxy_pool": proxy_manager.get_summary(),
+            "outbound_proxy": mask_proxy_url(next_p.url if next_p else None),
+        }
+
+    if data.get("action") == "clear_proxies" or data.get("clear_proxies"):
+        from api.proxy_manager import proxy_manager
+        from downloader import set_outbound_proxy
+        proxy_manager.clear_proxies()
+        set_outbound_proxy(None)
+        return {
+            "status": "success",
+            "message": "Proxy pool cleared (direct mode active).",
+            "proxy_pool": proxy_manager.get_summary(),
+            "outbound_proxy": None,
+        }
+
+    # Handle dynamic single outbound proxy setting update (backwards compatibility)
     if "outbound_proxy" in data:
         proxy_val = (data.get("outbound_proxy") or "").strip()
         from downloader import set_outbound_proxy, get_outbound_proxy
+        from api.proxy_manager import proxy_manager
         if proxy_val:
-            redis_client.set("terabridge:outbound_proxy", proxy_val)
+            proxy_manager.set_proxies([proxy_val])
             set_outbound_proxy(proxy_val)
         else:
-            redis_client.delete("terabridge:outbound_proxy")
+            proxy_manager.clear_proxies()
             set_outbound_proxy(None)
 
         if not data.get("account_id") and not data.get("cookie") and not data.get("ndus") and not data.get("action"):
@@ -247,6 +288,7 @@ async def _handle_config_post(request: Request):
                 "status": "success",
                 "message": f"Outbound proxy {'updated' if proxy_val else 'cleared'}.",
                 "outbound_proxy": mask_proxy_url(get_outbound_proxy()),
+                "proxy_pool": proxy_manager.get_summary(),
             }
 
     from api.routes.resolve import get_active_account_id
@@ -486,11 +528,13 @@ async def _handle_config_get():
             }
 
         from downloader import get_outbound_proxy
+        from api.proxy_manager import proxy_manager
         from api.config import PROXY_DOWNLOADS
         return {
             "status":            "success",
             "active_account_id": active_id,
             "outbound_proxy":    mask_proxy_url(get_outbound_proxy()),
+            "proxy_pool":        proxy_manager.get_summary(),
             "proxy_downloads":   PROXY_DOWNLOADS,
             "accounts_pool":     pool_summary,
             "env_ndus_prefix":   (env_ndus[:6] + "..." + env_ndus[-4:]) if env_ndus else None,

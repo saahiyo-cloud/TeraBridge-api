@@ -55,6 +55,13 @@ except ImportError:
 
 
 def get_outbound_proxy() -> str | None:
+    try:
+        from api.proxy_manager import proxy_manager
+        current = proxy_manager.get_current_proxy_url()
+        if current:
+            return current
+    except Exception:
+        pass
     return OUTBOUND_PROXY
 
 
@@ -92,6 +99,11 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, logid=None):
         client.cookies.clear()
         for k, v in COOKIES_DICT.items():
             client.cookies.set(k, v)
+        try:
+            from api.proxy_manager import proxy_manager
+            proxy_manager.sync_cookies(COOKIES_DICT)
+        except Exception:
+            pass
     if js_token:
         JSTOKEN = js_token
     if bds_token:
@@ -103,14 +115,23 @@ async def validate_session_cookie(cookie_str):
     """Verify if a TeraBox cookie is valid by making a test request and checking for a bdstoken."""
     temp_cookies = parse_cookies(cookie_str)
     
+    proxy_to_use = OUTBOUND_PROXY
+    try:
+        from api.proxy_manager import proxy_manager
+        p = proxy_manager.get_next_proxy()
+        if p and p.url:
+            proxy_to_use = p.url
+    except Exception:
+        pass
+
     try:
         async with httpx.AsyncClient(
             headers=HEADERS,
             cookies=temp_cookies,
             follow_redirects=True,
             timeout=15.0,
-            proxy=OUTBOUND_PROXY,
-            http2=True if not OUTBOUND_PROXY else False,
+            proxy=proxy_to_use,
+            http2=True if not proxy_to_use else False,
         ) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
@@ -133,14 +154,23 @@ async def resolve_tokens_from_cookie(cookie_str):
     temp_cookies = parse_cookies(cookie_str)
     resolved = {}
     
+    proxy_to_use = OUTBOUND_PROXY
+    try:
+        from api.proxy_manager import proxy_manager
+        p = proxy_manager.get_next_proxy()
+        if p and p.url:
+            proxy_to_use = p.url
+    except Exception:
+        pass
+
     try:
         async with httpx.AsyncClient(
             headers=HEADERS,
             cookies=temp_cookies,
             follow_redirects=True,
             timeout=15.0,
-            proxy=OUTBOUND_PROXY,
-            http2=True if not OUTBOUND_PROXY else False,
+            proxy=proxy_to_use,
+            http2=True if not proxy_to_use else False,
         ) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
@@ -380,7 +410,15 @@ _session_loop = None
 
 
 def get_session():
-    """Return the live shared client, recreating it after app shutdown/tests or loop switch."""
+    """Return the live shared client, preferring the current context-bound proxy if active."""
+    try:
+        from api.proxy_manager import proxy_manager
+        ctx_client = proxy_manager.get_current_session()
+        if ctx_client is not None and not ctx_client.is_closed:
+            return ctx_client
+    except Exception:
+        pass
+
     global _session, _session_loop
     current_loop = None
     try:
@@ -711,14 +749,38 @@ async def _process_single_file_metadata(item, share_id, uk, share_session, exist
 _resolve_lock = asyncio.Lock()
 
 
-async def resolve_link(link, action="d", wait_for_transcoding=False, quality=None):
+async def resolve_link(link, action="d", wait_for_transcoding=False, quality=None, proxy_override=None):
     """Dispatch resolution without a global lock.
 
     Tokens are refreshed locally inside each call, so concurrent requests for
     different links are fully parallel. The single-flight / request-collapsing
     logic in index.py deduplicates requests for the *same* link.
     """
-    return await _resolve_link(link, action, wait_for_transcoding, quality)
+    from api.proxy_manager import proxy_manager
+    async with proxy_manager.acquire_context(proxy_override=proxy_override) as pctx:
+        try:
+            res = await _resolve_link(link, action, wait_for_transcoding, quality)
+            errno = res.get("errno")
+            if errno == 0:
+                if pctx.proxy_url:
+                    proxy_manager.mark_success(pctx.proxy_url)
+            elif errno in (400141, 400810):
+                if pctx.proxy_url:
+                    proxy_manager.mark_failure(
+                        pctx.proxy_url,
+                        reason=f"TeraBox WAF flagged (errno {errno}: {res.get('error', '')})",
+                        cooldown_seconds=300.0,
+                    )
+            return res
+        except Exception as exc:
+            err_str = str(exc)
+            if pctx.proxy_url and any(w in err_str.lower() for w in ("proxy", "402", "407", "connecttimeout", "proxyerror", "connection refused")):
+                proxy_manager.mark_failure(
+                    pctx.proxy_url,
+                    reason=f"Proxy network error: {err_str}",
+                    cooldown_seconds=300.0,
+                )
+            raise
 
 
 async def _resolve_link(link, action="d", wait_for_transcoding=False, quality=None):

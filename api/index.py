@@ -139,6 +139,11 @@ async def lifespan(app: FastAPI):
 
     await _proxy_client.aclose()
     await close_session()
+    try:
+        from api.proxy_manager import proxy_manager
+        await proxy_manager.close_all()
+    except Exception:
+        pass
     if redis_client:
         redis_client.close()
 

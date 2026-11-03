@@ -307,42 +307,92 @@
     </div>
     <!-- Accounts Management View (Tab 2) -->
     <div id="accountsView" class="hidden space-y-6">
-      <!-- Outbound Proxy Banner / Control -->
-      <div class="glass-card rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 border border-cyan-500/20 bg-slate-900/60">
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-            </svg>
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-xs font-bold text-white">Outbound Proxy (Bypass Cloud IP Block)</span>
-              <span id="proxyStatusBadge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-white/5">Direct</span>
+      <!-- Outbound Multi-Proxy Rotation Pool Banner / Control -->
+      <div class="glass-card rounded-2xl p-4 border border-cyan-500/20 bg-slate-900/60 space-y-4">
+        <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+              </svg>
             </div>
-            <p id="proxyCurrentText" class="text-[11px] text-slate-400 mt-0.5 font-mono">No proxy configured (using hosted IP directly)</p>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-white">Smart Outbound Proxy Pool</span>
+                <span id="proxyStatusBadge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-white/5">Direct</span>
+                <span id="proxyPoolStatsBadge" class="hidden px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"></span>
+              </div>
+              <p id="proxyCurrentText" class="text-[11px] text-slate-400 mt-0.5 font-mono">No proxy pool configured (direct connection)</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 w-full md:w-auto justify-end">
+            <button 
+              id="proxyToggleBtn"
+              onclick="toggleProxyPanel()" 
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold transition whitespace-nowrap"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span>Manage Proxies</span>
+            </button>
+            <button 
+              onclick="clearOutboundProxy()" 
+              class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition whitespace-nowrap"
+              title="Clear all proxies and use direct connection"
+            >
+              Clear Pool
+            </button>
           </div>
         </div>
-        <div class="flex items-center gap-2 w-full md:w-auto">
-          <input 
-            type="text" 
-            id="proxyInput" 
-            placeholder="http://user:pass@host:port" 
-            class="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500/50 w-full md:w-64"
-          />
-          <button 
-            onclick="saveOutboundProxy()" 
-            class="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-semibold text-white transition whitespace-nowrap"
-          >
-            Save Proxy
-          </button>
-          <button 
-            onclick="clearOutboundProxy()" 
-            class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition whitespace-nowrap"
-            title="Clear Proxy"
-          >
-            Clear
-          </button>
+
+        <!-- Collapsible Multi-Proxy Management Panel -->
+        <div id="proxyPanel" class="hidden pt-3 border-t border-white/5 space-y-4">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <!-- Left: Add/Paste Proxies Form -->
+            <div class="lg:col-span-5 space-y-2">
+              <label class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                <span>Add / Paste Proxies</span>
+                <span class="text-[10px] text-slate-500 font-mono">One per line</span>
+              </label>
+              <textarea
+                id="proxyBatchInput"
+                rows="4"
+                placeholder="Paste proxies (Webshare IP:PORT:USER:PASS or http://user:pass@host:port)&#10;e.g.:&#10;64.137.96.74:6641:user:pass&#10;198.23.243.226:6361:user:pass"
+                class="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-cyan-500/50 resize-y"
+              ></textarea>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick="saveProxyPool(false)"
+                  class="flex-1 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-semibold text-white transition shadow-sm"
+                >
+                  Set as Pool (Replace)
+                </button>
+                <button
+                  onclick="saveProxyPool(true)"
+                  class="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition"
+                >
+                  Append to Pool
+                </button>
+              </div>
+              <p class="text-[10px] text-slate-500 leading-relaxed">
+                Supports automatic per-request round-robin rotation, task-level session affinity, and automatic 5-minute quarantine on TeraBox rate-limits or WAF verify blocks.
+              </p>
+            </div>
+
+            <!-- Right: Active Proxies List -->
+            <div class="lg:col-span-7 space-y-2">
+              <label class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                <span>Configured Proxy Pool</span>
+                <span id="proxyListCount" class="text-[10px] text-slate-500 font-mono">0 proxies</span>
+              </label>
+              <div id="proxyItemsContainer" class="max-h-56 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                <!-- Proxy rows rendered dynamically -->
+                <div class="text-center py-6 text-slate-500 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -824,18 +874,73 @@
             select.appendChild(opt);
           });
 
-          // Update Proxy UI
+          // Update Multi-Proxy Pool UI
           const proxyBadge = document.getElementById('proxyStatusBadge');
+          const proxyStatsBadge = document.getElementById('proxyPoolStatsBadge');
           const proxyText = document.getElementById('proxyCurrentText');
+          const proxyItemsContainer = document.getElementById('proxyItemsContainer');
+          const proxyListCount = document.getElementById('proxyListCount');
+
+          const pool = data.proxy_pool || { total: 0, healthy: 0, cooldown: 0, proxies: [] };
           if (proxyBadge && proxyText) {
-            if (data.outbound_proxy) {
-              proxyBadge.textContent = 'Active';
+            if (pool.total > 0) {
+              proxyBadge.textContent = 'Pool Active';
               proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
-              proxyText.textContent = `Proxy active: ${data.outbound_proxy}`;
+              
+              if (proxyStatsBadge) {
+                proxyStatsBadge.classList.remove('hidden');
+                proxyStatsBadge.textContent = `${pool.healthy}/${pool.total} Healthy${pool.cooldown > 0 ? ` (${pool.cooldown} Quarantined)` : ''}`;
+                proxyStatsBadge.className = pool.cooldown > 0 
+                  ? 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                  : 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20';
+              }
+              proxyText.textContent = `Rotating across ${pool.total} proxies (Round-Robin with Auto-Quarantine)`;
+            } else if (data.outbound_proxy) {
+              proxyBadge.textContent = 'Active (Single)';
+              proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+              if (proxyStatsBadge) proxyStatsBadge.classList.add('hidden');
+              proxyText.textContent = `Single proxy: ${data.outbound_proxy}`;
             } else {
               proxyBadge.textContent = 'Direct';
               proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-white/5';
+              if (proxyStatsBadge) proxyStatsBadge.classList.add('hidden');
               proxyText.textContent = 'No proxy configured (using hosted IP directly)';
+            }
+          }
+
+          if (proxyListCount) {
+            proxyListCount.textContent = `${pool.total} proxies`;
+          }
+
+          if (proxyItemsContainer) {
+            if (pool.proxies && pool.proxies.length > 0) {
+              proxyItemsContainer.innerHTML = pool.proxies.map(p => {
+                const isCooldown = p.status === 'cooldown';
+                const statusBadge = isCooldown
+                  ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">Cooldown (${p.cooldown_remaining}s)</span>`
+                  : `<span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Healthy</span>`;
+                
+                const stats = `<span class="text-[10px] text-slate-400 font-mono"><span class="text-emerald-400 font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-rose-400 font-semibold' : 'text-slate-500'}">${p.failure_count || 0}</span> err</span>`;
+                const lastErr = p.last_error ? `<span class="text-[9px] text-amber-400/80 truncate max-w-xs block" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</span>` : '';
+
+                return `
+                  <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/20 transition">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="w-1.5 h-1.5 rounded-full ${isCooldown ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}"></span>
+                      <div class="min-w-0">
+                        <div class="font-mono text-[11px] text-white truncate">${escapeQuotes(p.url)}</div>
+                        ${lastErr}
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      ${stats}
+                      ${statusBadge}
+                    </div>
+                  </div>
+                `;
+              }).join('');
+            } else {
+              proxyItemsContainer.innerHTML = '<div class="text-center py-6 text-slate-500 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>';
             }
           }
 
@@ -1149,28 +1254,36 @@
       }
     }
 
-    async function saveOutboundProxy() {
-      const val = document.getElementById('proxyInput').value.trim();
+    function toggleProxyPanel() {
+      const panel = document.getElementById('proxyPanel');
+      if (panel) {
+        panel.classList.toggle('hidden');
+      }
+    }
+
+    async function saveProxyPool(isAppend) {
+      const val = document.getElementById('proxyBatchInput').value.trim();
       if (!val) {
-        showToast('Please enter a proxy URL (e.g. http://user:pass@host:port)', true);
+        showToast('Please paste one or more proxies (IP:PORT:USER:PASS or http://...)', true);
         return;
       }
       try {
+        const payload = isAppend ? { add_proxies: val } : { outbound_proxies: val };
         const res = await fetch('/api/admin/config', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...getAuthHeaders()
           },
-          body: JSON.stringify({ outbound_proxy: val })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (res.ok && data.status === 'success') {
-          showToast(data.message || 'Outbound proxy updated successfully!');
-          document.getElementById('proxyInput').value = '';
+          showToast(data.message || 'Proxy pool updated successfully!');
+          document.getElementById('proxyBatchInput').value = '';
           loadAccounts();
         } else {
-          showToast(data.message || 'Failed to save proxy', true);
+          showToast(data.message || 'Failed to update proxy pool', true);
         }
       } catch (e) {
         showToast('Proxy save error: ' + e.message, true);
@@ -1178,7 +1291,7 @@
     }
 
     async function clearOutboundProxy() {
-      if (!confirm('Clear outbound proxy and revert to direct connection?')) return;
+      if (!confirm('Clear all proxies from the pool and revert to direct connection?')) return;
       try {
         const res = await fetch('/api/admin/config', {
           method: 'POST',
@@ -1186,15 +1299,14 @@
             'Content-Type': 'application/json',
             ...getAuthHeaders()
           },
-          body: JSON.stringify({ outbound_proxy: '' })
+          body: JSON.stringify({ action: 'clear_proxies' })
         });
         const data = await res.json();
         if (res.ok && data.status === 'success') {
-          showToast('Outbound proxy cleared (direct mode active)');
-          document.getElementById('proxyInput').value = '';
+          showToast('Proxy pool cleared (direct mode active)');
           loadAccounts();
         } else {
-          showToast(data.message || 'Failed to clear proxy', true);
+          showToast(data.message || 'Failed to clear proxy pool', true);
         }
       } catch (e) {
         showToast('Proxy clear error: ' + e.message, true);

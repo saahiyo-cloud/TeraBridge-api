@@ -93,17 +93,18 @@ async def resolve_link_with_retry(
     wait_for_transcoding: bool = False,
     quality: str | None = None,
 ) -> dict:
-    """Resolve a share link, rotating accounts on auth/storage failures."""
+    """Resolve a share link, rotating accounts or proxies on failures."""
     import json
+    from api.proxy_manager import proxy_manager
 
-    max_retries = 3
+    max_retries = max(3, proxy_manager.get_healthy_count())
     if redis_client:
         try:
             accounts = get_all_accounts()
             healthy_count = sum(
                 1 for d in accounts.values() if d.get("status", "healthy") == "healthy"
             )
-            max_retries = max(3, healthy_count)
+            max_retries = max(max_retries, healthy_count)
         except Exception:
             pass
 
@@ -119,21 +120,26 @@ async def resolve_link_with_retry(
 
         is_account_error = False
         is_transient_rotation = False
+        is_proxy_error = False
         reason = "unknown"
         errno = res.get("errno")
         error_msg = str(res.get("error", ""))
 
-        if errno == -1:
-            is_account_error = True
-            reason = f"Token resolution failed: {error_msg}"
-        elif errno == -2:
-            is_account_error = True
-            reason = f"Share list query failed: {error_msg}"
+        if errno in (400141, 400810):
+            is_proxy_error = True
+            reason = f"TeraBox WAF flagged proxy (errno {errno})"
+        elif errno in (-1, -2):
+            if any(w in error_msg.lower() for w in ("proxy", "402", "407", "connecttimeout", "proxyerror", "connection refused", "timeout")):
+                is_proxy_error = True
+                reason = f"Proxy transport failure: {error_msg}"
+            else:
+                is_account_error = True
+                reason = f"Token resolution failed: {error_msg}" if errno == -1 else f"Share list query failed: {error_msg}"
         elif errno in (-6, -9, 111):
             is_account_error = True
             reason = f"Session expired/invalid (errno {errno})"
 
-        if not is_account_error and res.get("errno") == 0:
+        if not is_account_error and not is_proxy_error and res.get("errno") == 0:
             files = res.get("files", [])
             if files:
                 account_fail = 0
@@ -153,6 +159,12 @@ async def resolve_link_with_retry(
                     is_account_error = True
                 elif transient_fail == len(files):
                     is_transient_rotation = True
+
+        if is_proxy_error:
+            logger.warning("Proxy issue detected: %s.", reason)
+            if attempt < max_retries - 1 and proxy_manager.get_total_count() > 1:
+                logger.info("Retrying with rotated proxy (attempt %d/%d)...", attempt + 2, max_retries)
+                continue
 
         if is_account_error and active_id:
             logger.warning(

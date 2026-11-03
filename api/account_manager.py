@@ -36,15 +36,17 @@ def load_config_from_redis():
         return
 
     try:
-        # 1. Sync outbound proxy from Redis if dynamically configured
+        # 1. Sync outbound proxy pool and settings from Redis
         try:
+            from api.proxy_manager import proxy_manager
+            proxy_manager.load_from_redis()
             stored_proxy = redis_client.get("terabridge:outbound_proxy")
             if isinstance(stored_proxy, bytes):
                 stored_proxy = stored_proxy.decode("utf-8")
             if stored_proxy:
                 set_outbound_proxy(stored_proxy)
         except Exception as proxy_exc:
-            logger.debug("Failed to check dynamic proxy in Redis: %s", proxy_exc)
+            logger.debug("Failed to sync proxy pool from Redis: %s", proxy_exc)
 
         # 2. Sync active Terabox account
         active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)

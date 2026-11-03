@@ -95,9 +95,9 @@ class TestTeraBridgeAPI(unittest.TestCase):
         headers = {"X-API-Key": API_KEY}
         resp = self.make_request("GET", f"/api/resolve?url={TEST_LINK}&mode=list", headers=headers)
         # Note: Depending on the backend session cookie state, it may return success or api-level error.
-        # But both are structured JSON returned with status 200 (or 429 rate limit).
-        self.assertIn(resp.status_code, [200, 429])
-        if resp.status_code == 200:
+        # But both are structured JSON returned with status 200, 400 (expired share), or 429 rate limit.
+        self.assertIn(resp.status_code, [200, 400, 429])
+        if resp.status_code in (200, 400):
             data = resp.json()
             self.assertIn("status", data)
 
@@ -112,8 +112,8 @@ class TestTeraBridgeAPI(unittest.TestCase):
         headers = {"X-API-Key": API_KEY}
         payload = {"url": TEST_LINK, "mode": "list"}
         resp = self.make_request("POST", "/api/resolve", json=payload, headers=headers)
-        self.assertIn(resp.status_code, [200, 429])
-        if resp.status_code == 200:
+        self.assertIn(resp.status_code, [200, 400, 429])
+        if resp.status_code in (200, 400):
             data = resp.json()
             self.assertIn("status", data)
 
@@ -341,6 +341,94 @@ class TestTeraBridgeAPI(unittest.TestCase):
         # 400 when path outside /cloudvids is given
         resp_outside = self.make_request("DELETE", "/api/admin/cloudvids", json={"paths": ["/root/malicious.mp4"]}, headers=headers)
         self.assertEqual(resp_outside.status_code, 400)
+
+    # 39. Smart Multi-Proxy Normalization & Round-Robin Rotation
+    def test_39_proxy_normalization_and_rotation(self):
+        from api.proxy_manager import normalize_proxy, mask_proxy, ProxyPoolManager
+        
+        # Test Webshare IP:PORT:USER:PASS format
+        norm1 = normalize_proxy("64.137.96.74:6641:aiepavhe:6vonlhzxrt8y")
+        self.assertEqual(norm1, "http://aiepavhe:6vonlhzxrt8y@64.137.96.74:6641")
+        
+        # Test standard URL format
+        norm2 = normalize_proxy("http://user:pass@198.23.243.226:6361")
+        self.assertEqual(norm2, "http://user:pass@198.23.243.226:6361")
+        
+        # Test mask
+        masked = mask_proxy(norm1)
+        self.assertEqual(masked, "http://aiepavhe:***@64.137.96.74:6641")
+        
+        # Test pool rotation
+        pool = ProxyPoolManager()
+        pool.set_proxies([
+            "64.137.96.74:6641:aiepavhe:6vonlhzxrt8y",
+            "198.23.243.226:6361:aiepavhe:6vonlhzxrt8y",
+            "38.154.185.97:6370:aiepavhe:6vonlhzxrt8y",
+        ])
+        self.assertEqual(pool.get_total_count(), 3)
+        self.assertEqual(pool.get_healthy_count(), 3)
+        
+        p1 = pool.get_next_proxy()
+        p2 = pool.get_next_proxy()
+        p3 = pool.get_next_proxy()
+        p4 = pool.get_next_proxy()
+        
+        self.assertEqual(p1.url, "http://aiepavhe:6vonlhzxrt8y@64.137.96.74:6641")
+        self.assertEqual(p2.url, "http://aiepavhe:6vonlhzxrt8y@198.23.243.226:6361")
+        self.assertEqual(p3.url, "http://aiepavhe:6vonlhzxrt8y@38.154.185.97:6370")
+        self.assertEqual(p4.url, p1.url)  # Round-robin wrapped around
+
+    # 40. /api/admin/config Proxy Pool Endpoints
+    def test_40_proxy_pool_admin_endpoints(self):
+        headers = {"X-API-Key": API_KEY}
+        
+        # Set pool via POST
+        proxies_payload = {
+            "outbound_proxies": "64.137.96.74:6641:aiepavhe:6vonlhzxrt8y\n198.23.243.226:6361:aiepavhe:6vonlhzxrt8y"
+        }
+        resp = self.make_request("POST", "/api/admin/config", json=proxies_payload, headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertIn("proxy_pool", data)
+        self.assertEqual(data["proxy_pool"]["total"], 2)
+        
+        # Verify via GET
+        resp_get = self.make_request("GET", "/api/admin/config", headers=headers)
+        self.assertEqual(resp_get.status_code, 200)
+        get_data = resp_get.json()
+        self.assertIn("proxy_pool", get_data)
+        self.assertEqual(get_data["proxy_pool"]["total"], 2)
+        self.assertEqual(get_data["proxy_pool"]["healthy"], 2)
+        
+        # Clear pool
+        resp_clear = self.make_request("POST", "/api/admin/config", json={"action": "clear_proxies"}, headers=headers)
+        self.assertEqual(resp_clear.status_code, 200)
+        clear_data = resp_clear.json()
+        self.assertEqual(clear_data["proxy_pool"]["total"], 0)
+
+    # 41. Proxy Auto-Quarantine Cooldown Logic
+    def test_41_proxy_quarantine_cooldown(self):
+        from api.proxy_manager import ProxyPoolManager
+        import time
+        
+        pool = ProxyPoolManager()
+        pool.set_proxies(["http://user:pass@1.2.3.4:8080", "http://user:pass@5.6.7.8:8080"])
+        
+        # Quarantine the first proxy
+        pool.mark_failure("http://user:pass@1.2.3.4:8080", reason="TeraBox WAF verify 400141", cooldown_seconds=60)
+        
+        self.assertEqual(pool.get_total_count(), 2)
+        self.assertEqual(pool.get_healthy_count(), 1)
+        
+        # Next selections should ONLY pick the healthy proxy
+        next_p = pool.get_next_proxy()
+        self.assertEqual(next_p.url, "http://user:pass@5.6.7.8:8080")
+        
+        # Mark success restores health
+        pool.mark_success("http://user:pass@1.2.3.4:8080")
+        self.assertEqual(pool.get_healthy_count(), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
