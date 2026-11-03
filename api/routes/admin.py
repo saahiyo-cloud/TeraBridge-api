@@ -127,6 +127,23 @@ async def stats(request: Request):
     }
 
 
+# ─── Mask helpers ───────────────────────────────────────────────────
+
+def mask_proxy_url(proxy_url: str | None) -> str | None:
+    if not proxy_url:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(proxy_url)
+        if parsed.username:
+            netloc = f"{parsed.username}:***@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+        return proxy_url
+    except Exception:
+        return "set"
+
+
 # ─── /api/debug_curl ─────────────────────────────────────────────────
 
 @router.get("/api/debug_curl")
@@ -157,11 +174,12 @@ async def debug_curl(request: Request):
             status_code=403,
         )
     # Only send Terabox cookies to allowlisted hosts
-    from downloader import COOKIES_DICT
+    from downloader import COOKIES_DICT, get_outbound_proxy
     request_cookies = COOKIES_DICT if _is_allowed_stream_host(hostname) else None
+    proxy = get_outbound_proxy()
 
     try:
-        async with httpx.AsyncClient(timeout=15.0, http2=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, proxy=proxy, http2=True if not proxy else False) as client:
             r = await client.get(url, headers={"User-Agent": UA}, cookies=request_cookies)
             try:
                 body = r.json()
@@ -212,6 +230,24 @@ async def _handle_config_post(request: Request):
         data = await request.json()
     except Exception:
         data = {}
+
+    # Handle dynamic outbound proxy setting update
+    if "outbound_proxy" in data:
+        proxy_val = (data.get("outbound_proxy") or "").strip()
+        from downloader import set_outbound_proxy, get_outbound_proxy
+        if proxy_val:
+            redis_client.set("terabridge:outbound_proxy", proxy_val)
+            set_outbound_proxy(proxy_val)
+        else:
+            redis_client.delete("terabridge:outbound_proxy")
+            set_outbound_proxy(None)
+
+        if not data.get("account_id") and not data.get("cookie") and not data.get("ndus") and not data.get("action"):
+            return {
+                "status": "success",
+                "message": f"Outbound proxy {'updated' if proxy_val else 'cleared'}.",
+                "outbound_proxy": mask_proxy_url(get_outbound_proxy()),
+            }
 
     from api.routes.resolve import get_active_account_id
     account_id = data.get("account_id") or get_active_account_id() or "account_1"
@@ -449,9 +485,13 @@ async def _handle_config_get():
                 "last_used": 0,
             }
 
+        from downloader import get_outbound_proxy
+        from api.config import PROXY_DOWNLOADS
         return {
             "status":            "success",
             "active_account_id": active_id,
+            "outbound_proxy":    mask_proxy_url(get_outbound_proxy()),
+            "proxy_downloads":   PROXY_DOWNLOADS,
             "accounts_pool":     pool_summary,
             "env_ndus_prefix":   (env_ndus[:6] + "..." + env_ndus[-4:]) if env_ndus else None,
         }

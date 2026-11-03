@@ -54,7 +54,13 @@ logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ── Internal modules ──────────────────────────────────────────────────
-from api.config import ALLOWED_ORIGINS, API_KEY, REQUIRE_API_KEY
+from api.config import (
+    ALLOWED_ORIGINS,
+    API_KEY,
+    REQUIRE_API_KEY,
+    OUTBOUND_PROXY,
+    PROXY_DOWNLOADS,
+)
 from api.middleware import (
     ConfigRefreshMiddleware,
     check_safe_redirect,
@@ -78,7 +84,8 @@ _proxy_client = httpx.AsyncClient(
     follow_redirects=True,
     event_hooks={"response": [check_safe_redirect]},
     timeout=120.0,
-    http2=True,
+    http2=True if not (OUTBOUND_PROXY and PROXY_DOWNLOADS) else False,
+    proxy=OUTBOUND_PROXY if PROXY_DOWNLOADS else None,
     limits=httpx.Limits(
         max_connections=200,
         max_keepalive_connections=50,

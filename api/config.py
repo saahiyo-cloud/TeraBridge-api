@@ -90,6 +90,16 @@ REDIRECT_SEGMENTS        = os.environ.get("REDIRECT_SEGMENTS", "False").lower() 
 NOTIFICATION_WEBHOOK_URL = os.environ.get("NOTIFICATION_WEBHOOK_URL")
 CONFIG_CHECK_INTERVAL    = 60  # seconds between dynamic config refreshes
 
+# ─── Outbound TeraBox Proxy (Bypasses Datacenter IP Blocks / CAPTCHA) ──
+OUTBOUND_PROXY = (
+    os.environ.get("TERABOX_OUTBOUND_PROXY")
+    or os.environ.get("OUTBOUND_PROXY")
+    or os.environ.get("HTTPS_PROXY")
+    or os.environ.get("HTTP_PROXY")
+    or None
+)
+PROXY_DOWNLOADS = os.environ.get("PROXY_DOWNLOADS", "false").lower() in ("true", "1", "yes")
+
 # ─── Allowed outbound stream hosts (SSRF allowlist) ───────────────────
 ALLOWED_STREAM_SUFFIXES = (
     ".1024terabox.com", ".terabox.com", ".teraboxapp.com", ".terabox.app", ".baidu.com",

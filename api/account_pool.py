@@ -44,13 +44,21 @@ async def fetch_account_profile(cookie_str: str, bds_token: str = None) -> dict:
     """
     if not cookie_str:
         return {}
-    from downloader import parse_cookies, BASE_API, UA, qp
+    from downloader import parse_cookies, BASE_API, UA, qp, get_outbound_proxy
     cookies_dict = parse_cookies(cookie_str)
     cookies_dict['PANWEB'] = '1'
     headers = {'User-Agent': UA, 'Referer': 'https://dm.1024terabox.com/main'}
 
+    proxy = get_outbound_proxy()
     try:
-        async with httpx.AsyncClient(headers=headers, cookies=cookies_dict, follow_redirects=True, timeout=12.0) as client:
+        async with httpx.AsyncClient(
+            headers=headers,
+            cookies=cookies_dict,
+            follow_redirects=True,
+            timeout=12.0,
+            proxy=proxy,
+            http2=True if not proxy else False,
+        ) as client:
             # 1. Scrape bdstoken and uk from /main
             r = await client.get(f"{BASE_API}/main")
             m_uk = re.search(r'["\']uk["\']\s*:\s*["\']?(\d+)', r.text)

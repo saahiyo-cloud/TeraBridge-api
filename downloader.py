@@ -40,6 +40,33 @@ BDSTOKEN = os.environ.get("TERABOX_BDSTOKEN", "")
 LOGID    = os.environ.get("TERABOX_LOGID", "")
 COOKIE   = os.environ.get("TERABOX_COOKIE", "")
 
+# ─── Outbound proxy configuration ────────────────────────────────────
+OUTBOUND_PROXY = None
+try:
+    from api.config import OUTBOUND_PROXY as _CFG_PROXY
+    OUTBOUND_PROXY = _CFG_PROXY
+except ImportError:
+    OUTBOUND_PROXY = (
+        os.environ.get("TERABOX_OUTBOUND_PROXY")
+        or os.environ.get("OUTBOUND_PROXY")
+        or os.environ.get("HTTPS_PROXY")
+        or os.environ.get("HTTP_PROXY")
+    )
+
+
+def get_outbound_proxy() -> str | None:
+    return OUTBOUND_PROXY
+
+
+def set_outbound_proxy(proxy_url: str | None):
+    global OUTBOUND_PROXY, _session
+    clean_proxy = (proxy_url or "").strip() or None
+    if clean_proxy != OUTBOUND_PROXY:
+        logger.info("Outbound proxy changed: %s -> %s", OUTBOUND_PROXY, clean_proxy)
+        OUTBOUND_PROXY = clean_proxy
+        if _session is not None and not _session.is_closed:
+            _session = None
+
 UA = "dubox;P2SP;2.2.91.249;dubox;4.2.0.1;I2404;android-android;16;JSbridge1.0.10;jointbridge;1.1.39;"
 ROOT_PATH = "/cloudvids"
 VIDEO_EXTS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
@@ -77,7 +104,14 @@ async def validate_session_cookie(cookie_str):
     temp_cookies = parse_cookies(cookie_str)
     
     try:
-        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, follow_redirects=True, timeout=15.0) as temp_client:
+        async with httpx.AsyncClient(
+            headers=HEADERS,
+            cookies=temp_cookies,
+            follow_redirects=True,
+            timeout=15.0,
+            proxy=OUTBOUND_PROXY,
+            http2=True if not OUTBOUND_PROXY else False,
+        ) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
                 return False, f"HTTP status {r.status_code}"
@@ -100,7 +134,14 @@ async def resolve_tokens_from_cookie(cookie_str):
     resolved = {}
     
     try:
-        async with httpx.AsyncClient(headers=HEADERS, cookies=temp_cookies, follow_redirects=True, timeout=15.0) as temp_client:
+        async with httpx.AsyncClient(
+            headers=HEADERS,
+            cookies=temp_cookies,
+            follow_redirects=True,
+            timeout=15.0,
+            proxy=OUTBOUND_PROXY,
+            http2=True if not OUTBOUND_PROXY else False,
+        ) as temp_client:
             r = await temp_client.get(f"{BASE_API}/main")
             if r.status_code != 200:
                 raise Exception(f"TeraBox returned HTTP {r.status_code}")
@@ -318,28 +359,37 @@ async def transfer_shared_file(fs_id, share_id, uk, share_session, bdstoken_val)
     return last_result
 
 def _create_session():
-    """Create an httpx.AsyncClient with connection pooling."""
+    """Create an httpx.AsyncClient with connection pooling and optional outbound proxy."""
     pool_conn = int(os.environ.get("HTTP_POOL_CONNECTIONS", 50))
     pool_max = int(os.environ.get("HTTP_POOL_MAXSIZE", 100))
     limits = httpx.Limits(max_keepalive_connections=pool_conn, max_connections=pool_max)
     
+    use_http2 = True if not OUTBOUND_PROXY else False
     s = httpx.AsyncClient(
         headers=HEADERS,
         cookies=COOKIES_DICT,
         limits=limits,
         timeout=httpx.Timeout(30.0),
-        http2=True
+        proxy=OUTBOUND_PROXY,
+        http2=use_http2
     )
     return s
 
 _session = None
+_session_loop = None
 
 
 def get_session():
-    """Return the live shared client, recreating it after app shutdown/tests."""
-    global _session
-    if _session is None or _session.is_closed:
+    """Return the live shared client, recreating it after app shutdown/tests or loop switch."""
+    global _session, _session_loop
+    current_loop = None
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    if _session is None or _session.is_closed or (_session_loop is not None and _session_loop != current_loop):
         _session = _create_session()
+        _session_loop = current_loop
     return _session
 
 

@@ -28,13 +28,25 @@ def load_config_from_redis():
     # Deferred import: downloader uses globals that must be readable
     # before this function is called, but we must not import at module
     # level to avoid circular-import issues during startup.
-    from downloader import update_credentials
+    import os
+    from downloader import update_credentials, set_outbound_proxy
     from api.routes.resolve import set_active_account_id
 
     if not redis_client:
         return
 
     try:
+        # 1. Sync outbound proxy from Redis if dynamically configured
+        try:
+            stored_proxy = redis_client.get("terabridge:outbound_proxy")
+            if isinstance(stored_proxy, bytes):
+                stored_proxy = stored_proxy.decode("utf-8")
+            if stored_proxy:
+                set_outbound_proxy(stored_proxy)
+        except Exception as proxy_exc:
+            logger.debug("Failed to check dynamic proxy in Redis: %s", proxy_exc)
+
+        # 2. Sync active Terabox account
         active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
         if isinstance(active_id, bytes):
             active_id = active_id.decode("utf-8")
@@ -59,6 +71,15 @@ def load_config_from_redis():
                 logid=creds.get("logid"),
             )
             logger.info("Synchronized active pool account: %s", active_id)
+        elif os.environ.get("TERABOX_COOKIE"):
+            logger.info("No healthy accounts in pool; falling back to default .env credentials")
+            set_active_account_id(None)
+            update_credentials(
+                cookie=os.environ.get("TERABOX_COOKIE"),
+                js_token=os.environ.get("TERABOX_JSTOKEN"),
+                bds_token=os.environ.get("TERABOX_BDSTOKEN"),
+                logid=os.environ.get("TERABOX_LOGID"),
+            )
 
     except Exception as exc:
         logger.warning("Failed to load config from Redis pool: %s", exc)
