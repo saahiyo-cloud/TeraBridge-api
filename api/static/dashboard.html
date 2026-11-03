@@ -4,9 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TeraBridge — Cloudvids Manager</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -14,14 +11,18 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-            mono: ['"JetBrains Mono"', 'monospace'],
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', '"Helvetica Neue"', 'system-ui', 'sans-serif'],
+            mono: ['"SF Mono"', 'ui-monospace', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
           },
           colors: {
-            brand: {
-              50: '#f0fdf4',
-              500: '#10b981',
-              600: '#059669',
+            apple: {
+              blue: '#0A84FF',
+              green: '#30D158',
+              orange: '#FF9F0A',
+              red: '#FF453A',
+              purple: '#BF5AF2',
+              teal: '#64D2FF',
+              gray: '#8E8E93',
             }
           }
         }
@@ -29,79 +30,126 @@
     }
   </script>
   <style>
-    body { font-family: 'Plus Jakarta Sans', sans-serif; }
-    .glass-card {
-      background: rgba(18, 24, 38, 0.7);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: #000000;
+      color: #F5F5F7;
     }
-    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-    .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.5); border-radius: 9999px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.8); }
+    .font-mono {
+      font-family: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      font-feature-settings: "tnum" 1;
+    }
+    /* Apple Liquid Glass and Standard Materials */
+    .apple-glass-nav {
+      background: rgba(18, 18, 22, 0.78);
+      backdrop-filter: blur(28px) saturate(190%);
+      -webkit-backdrop-filter: blur(28px) saturate(190%);
+      border-bottom: 0.5px solid rgba(255, 255, 255, 0.12);
+    }
+    .glass-card, .apple-card {
+      background: rgba(26, 26, 32, 0.65);
+      backdrop-filter: blur(24px) saturate(160%);
+      -webkit-backdrop-filter: blur(24px) saturate(160%);
+      border: 0.5px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .apple-card-subtle {
+      background: rgba(255, 255, 255, 0.035);
+      border: 0.5px solid rgba(255, 255, 255, 0.07);
+      border-radius: 14px;
+    }
+    .apple-btn-primary {
+      background: #0A84FF;
+      color: #ffffff;
+      font-weight: 500;
+      transition: all 0.15s ease-out;
+    }
+    .apple-btn-primary:hover {
+      background: #0077ED;
+    }
+    .apple-btn-primary:active {
+      transform: scale(0.98);
+    }
+    .apple-btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 0.5px solid rgba(255, 255, 255, 0.12);
+      color: #F5F5F7;
+      transition: all 0.15s ease-out;
+    }
+    .apple-btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+    .apple-btn-secondary:active {
+      transform: scale(0.98);
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 9999px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.35); }
     @keyframes pulse-subtle {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.6; }
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.65; transform: scale(0.96); }
     }
-    .animate-subtle { animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .animate-subtle { animation: pulse-subtle 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
   </style>
 </head>
-<body class="bg-[#0b0f17] text-slate-100 min-h-screen selection:bg-emerald-500/30 selection:text-emerald-300">
+<body class="bg-black text-[#F5F5F7] min-h-screen selection:bg-[#0A84FF]/30 selection:text-white">
 
-  <!-- Background decorative glows -->
+  <!-- Subtle Apple Ambient Background -->
   <div class="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-    <div class="absolute -top-40 -left-40 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px]"></div>
-    <div class="absolute top-1/3 -right-40 w-96 h-96 bg-blue-500/10 rounded-full blur-[128px]"></div>
-    <div class="absolute -bottom-40 left-1/3 w-96 h-96 bg-purple-500/10 rounded-full blur-[128px]"></div>
+    <div class="absolute -top-64 left-1/2 -translate-x-1/2 w-[800px] h-[450px] bg-gradient-to-b from-[#0A84FF]/[0.07] via-[#BF5AF2]/[0.03] to-transparent rounded-full blur-[140px]"></div>
   </div>
 
-  <!-- Header / Navigation -->
-  <header class="sticky top-0 z-30 border-b border-white/5 bg-[#0b0f17]/95 backdrop-blur-xl">
+  <!-- Header / Navigation (Apple Liquid Glass Toolbar) -->
+  <header class="sticky top-0 z-30 apple-glass-nav">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       
       <!-- Top Tier: Brand & System Controls -->
-      <div class="h-16 flex items-center justify-between border-b border-white/5 gap-4">
-        <!-- Brand Logo -->
+      <div class="h-16 flex items-center justify-between border-b border-white/[0.08] gap-4">
+        <!-- Brand Logo (Apple Cupertino Monogram) -->
         <div class="flex items-center gap-3 flex-shrink-0">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-[1px] shadow-lg shadow-emerald-500/20">
-            <div class="w-full h-full bg-[#0d131f] rounded-[11px] flex items-center justify-center">
-              <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          <div class="w-9 h-9 rounded-[11px] bg-gradient-to-tr from-[#0A84FF] to-[#30D158] p-[1px] shadow-lg shadow-[#0A84FF]/20">
+            <div class="w-full h-full bg-[#16161c] rounded-[10px] flex items-center justify-center">
+              <svg class="w-4 h-4 text-[#30D158]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
             </div>
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <span class="font-bold text-base tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">TeraBridge</span>
-              <span class="text-[10px] font-mono tracking-wider font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Cloudvids</span>
+              <span class="font-semibold text-[15px] tracking-tight text-white">TeraBridge</span>
+              <span class="text-[10px] font-mono tracking-wider font-semibold uppercase px-2 py-0.5 rounded-full bg-white/[0.08] text-white/80 border border-white/[0.12]">Cloudvids</span>
             </div>
-            <p class="text-[11px] text-slate-400 font-normal leading-tight hidden sm:block">Active Storage & Account Pool Manager</p>
+            <p class="text-[11px] text-white/45 font-normal leading-tight hidden sm:block">Storage Engine & Proxy Fleet Control</p>
           </div>
         </div>
 
         <!-- Global Action Controls -->
         <div class="flex items-center gap-2 sm:gap-2.5 flex-shrink-0">
           <!-- Add account button -->
-          <button onclick="openAccountModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-xs font-semibold text-emerald-400 transition shadow-sm shadow-emerald-500/10">
+          <button onclick="openAccountModal()" class="apple-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium shadow-sm">
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 4v16m8-8H4" />
             </svg>
             <span>Add Account</span>
           </button>
 
           <!-- Auth Key status button -->
-          <button onclick="promptApiKey()" id="authBtn" title="Set Admin API Key" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-slate-900/80 hover:bg-slate-800 text-xs font-medium text-slate-300 transition">
-            <svg class="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <button onclick="promptApiKey()" id="authBtn" title="Set Admin API Key" class="apple-btn-secondary flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs">
+            <svg class="w-3.5 h-3.5 text-[#FF9F0A] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
             </svg>
             <span id="authStatusText" class="font-mono text-[11px]">Key: Configured</span>
           </button>
 
           <!-- Refresh button -->
-          <button onclick="loadAll(true)" title="Force Refresh from TeraBox (Bypass Cache)" class="p-2 rounded-xl border border-white/10 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white transition">
-            <svg id="refreshIcon" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          <button onclick="loadAll(true)" title="Force Refresh (Bypass Cache)" class="apple-btn-secondary p-2 rounded-xl text-white/70 hover:text-white">
+            <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
         </div>
@@ -109,40 +157,40 @@
 
       <!-- Lower Tier: Navigation Tabs & Viewing Context -->
       <div class="py-2.5 flex items-center justify-between gap-4 flex-wrap sm:flex-nowrap">
-        <!-- Navigation Tabs (Pill Switcher) -->
-        <nav class="flex items-center gap-1 bg-slate-900/90 border border-white/10 rounded-xl p-1 text-xs flex-shrink-0">
-          <button id="tabAnalyticsBtn" onclick="switchTab('analytics')" class="px-3.5 py-1.5 rounded-lg font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        <!-- Apple Segmented Control (HIG Segmented Control) -->
+        <nav class="flex items-center gap-1 bg-white/[0.05] border border-white/[0.08] rounded-2xl p-1 text-xs flex-shrink-0 backdrop-blur-xl">
+          <button id="tabAnalyticsBtn" onclick="switchTab('analytics')" class="px-4 py-1.5 rounded-xl font-semibold bg-white/[0.14] text-white border border-white/[0.12] shadow-sm backdrop-blur-xl transition-all flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-[#0A84FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
             </svg>
             <span>Analytics & Monitoring</span>
           </button>
-          <button id="tabFilesBtn" onclick="switchTab('files')" class="px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          <button id="tabFilesBtn" onclick="switchTab('files')" class="px-4 py-1.5 rounded-xl font-medium text-white/60 hover:text-white hover:bg-white/[0.04] transition-all flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-[#30D158]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
             </svg>
             <span>Cloudvids Storage</span>
           </button>
-          <button id="tabAccountsBtn" onclick="switchTab('accounts')" class="px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+          <button id="tabAccountsBtn" onclick="switchTab('accounts')" class="px-4 py-1.5 rounded-xl font-medium text-white/60 hover:text-white hover:bg-white/[0.04] transition-all flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-[#BF5AF2]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
             </svg>
             <span>Accounts & Proxies (<span id="accCountBadge">0</span>)</span>
           </button>
         </nav>
 
         <div class="flex items-center gap-2 flex-shrink-0">
-          <!-- Auto-Refresh Toggle -->
-          <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-slate-900/90 text-slate-300 hover:text-white text-xs font-medium transition">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <!-- Auto-Refresh Toggle (Apple Dynamic Badge) -->
+          <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="apple-btn-secondary flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium">
+            <span class="w-2 h-2 rounded-full bg-[#30D158] animate-subtle"></span>
             <span id="autoRefreshText">Auto (10s)</span>
           </button>
           <!-- Account selector dropdown -->
-          <div id="accountSelectWrapper" class="hidden flex items-center gap-2 bg-slate-900/90 border border-white/10 hover:border-white/20 rounded-xl px-3 py-1.5 text-xs transition flex-shrink-0">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-pulse"></span>
-            <span class="text-slate-400 font-medium">Viewing Account:</span>
+          <div id="accountSelectWrapper" class="hidden flex items-center gap-2 apple-card-subtle px-3 py-1.5 text-xs flex-shrink-0">
+            <span class="w-2 h-2 rounded-full bg-[#30D158] flex-shrink-0 animate-pulse"></span>
+            <span class="text-white/50 font-medium">Viewing Account:</span>
             <select id="accountSelect" onchange="onAccountChange()" class="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] truncate">
-              <option value="" class="bg-slate-900">Active Account</option>
+              <option value="" class="bg-[#1c1c22]">Active Account</option>
             </select>
           </div>
         </div>
@@ -156,72 +204,72 @@
 
     <!-- Analytics & Monitoring View (Tab 0 - Active by Default) -->
     <div id="analyticsView" class="space-y-6">
-      <!-- 4 Top KPI Cards -->
+      <!-- 4 Top KPI Cards (Apple Modular Metric Panels) -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- KPI 1: System Health & Uptime -->
-        <div class="glass-card rounded-2xl p-4 border border-emerald-500/20 bg-slate-900/60 flex flex-col justify-between">
+        <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">System Status</span>
-            <span class="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">System Status</span>
+            <span class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/25">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#30D158] animate-subtle"></span>
               ONLINE
             </span>
           </div>
           <div class="my-3">
-            <div id="statUptime" class="text-xl font-bold font-mono text-white">--</div>
-            <p class="text-[11px] text-slate-400 mt-0.5">Instance Uptime</p>
+            <div id="statUptime" class="text-2xl font-semibold tracking-tight font-mono text-white">--</div>
+            <p class="text-[11px] text-white/45 mt-0.5">Instance Uptime</p>
           </div>
-          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
             <span>Redis Latency:</span>
-            <span id="statRedisPing" class="text-emerald-400 font-semibold">Connected (~2ms)</span>
+            <span id="statRedisPing" class="text-[#30D158] font-semibold">Connected (~2ms)</span>
           </div>
         </div>
 
         <!-- KPI 2: Traffic & Throughput -->
-        <div class="glass-card rounded-2xl p-4 border border-cyan-500/20 bg-slate-900/60 flex flex-col justify-between">
+        <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Traffic</span>
-            <span id="statSuccessRate" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">100% OK</span>
+            <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">Total Traffic</span>
+            <span id="statSuccessRate" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/25 font-mono">100% OK</span>
           </div>
           <div class="my-3">
-            <div id="statTotalRequests" class="text-2xl font-bold font-mono text-white">0</div>
-            <p class="text-[11px] text-slate-400 mt-0.5">API Requests Served</p>
+            <div id="statTotalRequests" class="text-2xl font-semibold tracking-tight font-mono text-white">0</div>
+            <p class="text-[11px] text-white/45 mt-0.5">API Requests Served</p>
           </div>
-          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
             <span>Avg Latency:</span>
-            <span id="statAvgLatency" class="text-cyan-400 font-semibold">-- ms</span>
+            <span id="statAvgLatency" class="text-[#0A84FF] font-semibold">-- ms</span>
           </div>
         </div>
 
         <!-- KPI 3: Cache & Offload -->
-        <div class="glass-card rounded-2xl p-4 border border-indigo-500/20 bg-slate-900/60 flex flex-col justify-between">
+        <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Cache Efficiency</span>
-            <span id="statCacheHitRate" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">--% Hit Rate</span>
+            <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">Cache Efficiency</span>
+            <span id="statCacheHitRate" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#BF5AF2]/15 text-[#BF5AF2] border border-[#BF5AF2]/25 font-mono">--% Hit Rate</span>
           </div>
           <div class="my-3">
-            <div id="statCacheHitsMisses" class="text-2xl font-bold font-mono text-white">0 / 0</div>
-            <p class="text-[11px] text-slate-400 mt-0.5">Hits vs Misses</p>
+            <div id="statCacheHitsMisses" class="text-2xl font-semibold tracking-tight font-mono text-white">0 / 0</div>
+            <p class="text-[11px] text-white/45 mt-0.5">Hits vs Misses</p>
           </div>
-          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
             <span>Rate-Limit Blocks:</span>
-            <span id="statRateBlocks" class="text-amber-400 font-semibold">0</span>
+            <span id="statRateBlocks" class="text-[#FF9F0A] font-semibold">0</span>
           </div>
         </div>
 
         <!-- KPI 4: Proxy & Account Fleet -->
-        <div class="glass-card rounded-2xl p-4 border border-teal-500/20 bg-slate-900/60 flex flex-col justify-between">
+        <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fleet Health</span>
-            <span id="statProxyHealthyBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/10 text-teal-300 border border-teal-500/20">-- Proxies</span>
+            <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">Fleet Health</span>
+            <span id="statProxyHealthyBadge" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#64D2FF]/15 text-[#64D2FF] border border-[#64D2FF]/25 font-mono">-- Proxies</span>
           </div>
           <div class="my-3">
-            <div id="statFleetCounts" class="text-2xl font-bold font-mono text-white">--</div>
-            <p class="text-[11px] text-slate-400 mt-0.5">Healthy Proxies / Accounts</p>
+            <div id="statFleetCounts" class="text-2xl font-semibold tracking-tight font-mono text-white">--</div>
+            <p class="text-[11px] text-white/45 mt-0.5">Healthy Proxies / Accounts</p>
           </div>
-          <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
             <span>Pool Storage:</span>
-            <span id="statFleetStorage" class="text-teal-400 font-semibold">-- GB</span>
+            <span id="statFleetStorage" class="text-[#64D2FF] font-semibold">-- GB</span>
           </div>
         </div>
       </div>
@@ -229,17 +277,17 @@
       <!-- Middle Grid: Route Distribution & Proxy Fleet Telemetry -->
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <!-- Left: Traffic & Route Distribution -->
-        <div class="lg:col-span-5 glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 flex flex-col justify-between space-y-4">
+        <div class="lg:col-span-5 apple-card p-5 flex flex-col justify-between space-y-4">
           <div>
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                <svg class="w-4 h-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <svg class="w-4 h-4 text-[#0A84FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
                 </svg>
                 <span>Traffic & Route Breakdown</span>
               </h3>
-              <span id="statStatusCodes" class="text-[10px] font-mono text-slate-400"></span>
+              <span id="statStatusCodes" class="text-[10px] font-mono text-white/50"></span>
             </div>
 
             <div class="space-y-3" id="routeProgressBars">
@@ -247,102 +295,102 @@
             </div>
           </div>
 
-          <div class="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between text-xs font-mono">
+          <div class="p-3.5 rounded-xl apple-card-subtle flex items-center justify-between text-xs font-mono">
             <div>
-              <span class="text-slate-500 block text-[10px]">HTTP 2xx (Success)</span>
-              <span id="statHttp2xx" class="text-emerald-400 font-bold">0</span>
+              <span class="text-white/45 block text-[10px]">HTTP 2xx (Success)</span>
+              <span id="statHttp2xx" class="text-[#30D158] font-bold">0</span>
             </div>
             <div>
-              <span class="text-slate-500 block text-[10px]">HTTP 4xx (Client)</span>
-              <span id="statHttp4xx" class="text-amber-400 font-bold">0</span>
+              <span class="text-white/45 block text-[10px]">HTTP 4xx (Client)</span>
+              <span id="statHttp4xx" class="text-[#FF9F0A] font-bold">0</span>
             </div>
             <div>
-              <span class="text-slate-500 block text-[10px]">HTTP 5xx (Server)</span>
-              <span id="statHttp5xx" class="text-rose-400 font-bold">0</span>
+              <span class="text-white/45 block text-[10px]">HTTP 5xx (Server)</span>
+              <span id="statHttp5xx" class="text-[#FF453A] font-bold">0</span>
             </div>
           </div>
         </div>
 
         <!-- Right: Proxy Fleet Live Matrix -->
-        <div class="lg:col-span-7 glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 space-y-4">
+        <div class="lg:col-span-7 apple-card p-5 space-y-4">
           <div class="flex items-center justify-between">
             <div>
-              <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                <svg class="w-4 h-4 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <svg class="w-4 h-4 text-[#64D2FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                 </svg>
                 <span>Proxy Fleet Real-Time Matrix</span>
               </h3>
-              <p class="text-[11px] text-slate-400 mt-0.5">Round-robin balancing with automatic 5-min quarantine on blocks</p>
+              <p class="text-[11px] text-white/45 mt-0.5">Round-robin balancing with automatic 5-min quarantine on blocks</p>
             </div>
-            <button onclick="testAllProxiesFleet()" id="btnProbeFleet" class="px-3 py-1.5 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            <button onclick="testAllProxiesFleet()" id="btnProbeFleet" class="apple-btn-secondary px-3.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-[#64D2FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               <span>Probe Fleet Now</span>
             </button>
           </div>
 
-          <div id="proxyFleetContainer" class="max-h-64 overflow-y-auto space-y-2 pr-1 text-xs">
+          <div id="proxyFleetContainer" class="max-h-64 overflow-y-auto space-y-2 pr-1 text-xs custom-scrollbar">
             <!-- Dynamic proxy cards -->
           </div>
         </div>
       </div>
 
       <!-- Bottom: Live Operational Event & Incident Log -->
-      <div class="glass-card rounded-2xl p-5 border border-white/5 bg-slate-900/60 space-y-4">
+      <div class="apple-card p-5 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <h3 class="text-sm font-bold text-white flex items-center gap-2">
-              <svg class="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+              <svg class="w-4 h-4 text-[#BF5AF2]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span>Live System Events & Incident Feed</span>
             </h3>
-            <p class="text-[11px] text-slate-400 mt-0.5">Real-time log of resolutions, quarantines, recoveries, and rotation events</p>
+            <p class="text-[11px] text-white/45 mt-0.5">Real-time log of resolutions, quarantines, recoveries, and rotation events</p>
           </div>
-          <div class="flex items-center gap-1.5 text-xs">
-            <button onclick="filterEvents('all')" id="evFilterAll" class="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-semibold border border-indigo-500/30 transition">All</button>
-            <button onclick="filterEvents('warning')" id="evFilterWarn" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition">Alerts</button>
-            <button onclick="filterEvents('success')" id="evFilterOk" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition">Resolves</button>
+          <div class="flex items-center gap-1.5 text-xs bg-white/[0.06] p-1 rounded-xl border border-white/[0.08]">
+            <button onclick="filterEvents('all')" id="evFilterAll" class="px-3 py-1 rounded-lg bg-white/[0.14] text-white font-medium border border-white/[0.12] transition">All</button>
+            <button onclick="filterEvents('warning')" id="evFilterWarn" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Alerts</button>
+            <button onclick="filterEvents('success')" id="evFilterOk" class="px-3 py-1 rounded-lg text-white/60 hover:text-white font-medium transition">Resolves</button>
           </div>
         </div>
 
-        <div id="eventsLogContainer" class="max-h-72 overflow-y-auto space-y-2 pr-1 font-mono text-[11px]">
+        <div id="eventsLogContainer" class="max-h-72 overflow-y-auto space-y-2 pr-1 font-mono text-[11px] custom-scrollbar">
           <!-- Dynamic event rows -->
         </div>
       </div>
     </div>
 
-    <!-- Files & Storage View (Tab 1) -->
+    <!-- Files & Storage View (Tab 1 - Apple Storage Inspector) -->
     <div id="filesView" class="hidden space-y-6">
       <!-- Top Banner: Storage Quota & Quick Metrics -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
         <!-- Card 1: Storage Quota Bar -->
-        <div class="glass-card rounded-2xl p-5 md:col-span-2 relative overflow-hidden flex flex-col justify-between">
+        <div class="apple-card p-5 md:col-span-2 relative overflow-hidden flex flex-col justify-between">
           <div>
             <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-2">
-                <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+              <div class="flex items-center gap-2.5">
+                <div class="p-2 rounded-xl bg-[#30D158]/15 text-[#30D158]">
                   <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1.5 3 3.5 3h9c2 0 3.5-1 3.5-3V7c0-2-1.5-3-3.5-3h-9C5.5 4 4 5 4 7zm0 5h16" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 7v10c0 2 1.5 3 3.5 3h9c2 0 3.5-1 3.5-3V7c0-2-1.5-3-3.5-3h-9C5.5 4 4 5 4 7zm0 5h16" />
                   </svg>
                 </div>
                 <div>
                   <h3 class="text-sm font-semibold text-white">TeraBox Account Quota</h3>
-                  <p class="text-xs text-slate-400" id="quotaSubtitle">Fetching storage limits...</p>
+                  <p class="text-xs text-white/45" id="quotaSubtitle">Fetching storage limits...</p>
                 </div>
               </div>
-              <span id="quotaPctBadge" class="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">--%</span>
+              <span id="quotaPctBadge" class="text-xs font-mono font-semibold px-2.5 py-1 rounded-full bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/25">--%</span>
             </div>
 
-            <!-- Progress Bar -->
-            <div class="w-full bg-slate-800/80 rounded-full h-3.5 overflow-hidden p-0.5 border border-white/5 mt-4">
-              <div id="quotaBar" class="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-blue-500 transition-all duration-700 ease-out" style="width: 0%"></div>
+            <!-- Apple System Progress Bar -->
+            <div class="w-full bg-white/[0.08] rounded-full h-2.5 overflow-hidden p-0.5 border border-white/[0.06] mt-4">
+              <div id="quotaBar" class="h-full rounded-full bg-gradient-to-r from-[#30D158] via-[#64D2FF] to-[#0A84FF] transition-all duration-700 ease-out" style="width: 0%"></div>
             </div>
           </div>
 
-          <div class="flex items-center justify-between text-xs text-slate-400 mt-4 pt-3 border-t border-white/5 font-mono">
+          <div class="flex items-center justify-between text-xs text-white/50 mt-4 pt-3 border-t border-white/[0.08] font-mono">
             <div>Used: <span id="usedGbText" class="text-white font-medium">0 GB</span></div>
             <div>Free: <span id="freeGbText" class="text-white font-medium">0 GB</span></div>
             <div>Total: <span id="totalGbText" class="text-white font-medium">0 GB</span></div>
@@ -350,33 +398,33 @@
         </div>
 
         <!-- Card 2: Folder Stats -->
-        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between">
+        <div class="apple-card p-5 flex flex-col justify-between">
           <div>
             <div class="flex items-center justify-between mb-3">
-              <div class="p-2 rounded-lg bg-blue-500/10 text-blue-400">
+              <div class="p-2 rounded-xl bg-[#0A84FF]/15 text-[#0A84FF]">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              <span class="text-xs font-medium text-slate-400">Path: <code class="text-slate-300 font-mono">/cloudvids</code></span>
+              <span class="text-xs font-medium text-white/50">Path: <code class="text-white/80 font-mono">/cloudvids</code></span>
             </div>
             <div class="mt-2">
-              <div class="text-3xl font-bold font-mono text-white" id="folderFileCount">0</div>
-              <p class="text-xs text-slate-400 mt-1">Transferred files currently held</p>
+              <div class="text-3xl font-semibold tracking-tight font-mono text-white" id="folderFileCount">0</div>
+              <p class="text-xs text-white/45 mt-1">Transferred files currently held</p>
             </div>
           </div>
-          <div class="text-xs text-slate-400 pt-3 border-t border-white/5 flex items-center justify-between font-mono">
+          <div class="text-xs text-white/50 pt-3 border-t border-white/[0.08] flex items-center justify-between font-mono">
             <span>Folder Size:</span>
-            <span id="folderTotalSize" class="text-emerald-400 font-semibold">0 MB</span>
+            <span id="folderTotalSize" class="text-[#30D158] font-semibold">0 MB</span>
           </div>
         </div>
       </div>
 
       <!-- Management Controls & Action Bar -->
-      <div class="glass-card rounded-2xl p-4 sm:p-5">
+      <div class="apple-card p-4 sm:p-5">
         <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
           
-          <!-- Left: Search & Filter -->
+          <!-- Left: Search & Filter (Apple Search Field) -->
           <div class="flex flex-wrap items-center gap-3 flex-1">
             <div class="relative flex-1 min-w-[240px]">
               <input 
@@ -384,51 +432,51 @@
                 id="searchInput" 
                 placeholder="Search by file name or fs_id..." 
                 oninput="filterFiles()"
-                class="w-full bg-slate-900/90 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition font-mono"
+                class="w-full bg-white/[0.06] border border-white/[0.1] rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-white/40 focus:outline-none focus:border-[#0A84FF] focus:bg-white/[0.08] transition font-mono"
               />
-              <svg class="w-4 h-4 text-slate-500 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              <svg class="w-4 h-4 text-white/40 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
 
             <!-- Sort dropdown -->
-            <select id="sortSelect" onchange="sortFiles()" class="bg-slate-900/90 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50 cursor-pointer">
-              <option value="time_desc">Newest First</option>
-              <option value="time_asc">Oldest First</option>
-              <option value="size_desc">Largest Size</option>
-              <option value="size_asc">Smallest Size</option>
-              <option value="name_asc">Name (A-Z)</option>
+            <select id="sortSelect" onchange="sortFiles()" class="bg-white/[0.06] border border-white/[0.1] rounded-xl px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-[#0A84FF] cursor-pointer">
+              <option value="time_desc" class="bg-[#1c1c22]">Newest First</option>
+              <option value="time_asc" class="bg-[#1c1c22]">Oldest First</option>
+              <option value="size_desc" class="bg-[#1c1c22]">Largest Size</option>
+              <option value="size_asc" class="bg-[#1c1c22]">Smallest Size</option>
+              <option value="name_asc" class="bg-[#1c1c22]">Name (A-Z)</option>
             </select>
           </div>
 
-          <!-- Right: Bulk Actions -->
-          <div class="flex items-center gap-2.5 flex-wrap">
-            <button onclick="selectAll(true)" class="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-800 border border-white/5 transition">
+          <!-- Right: Bulk Actions (Apple Cupertino Action Set) -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="selectAll(true)" class="apple-btn-secondary px-3 py-1.5 rounded-xl text-xs font-medium">
               Select All
             </button>
-            <button onclick="selectAll(false)" class="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-800 border border-white/5 transition">
+            <button onclick="selectAll(false)" class="apple-btn-secondary px-3 py-1.5 rounded-xl text-xs font-medium">
               Clear
             </button>
 
             <!-- Quick Prune Older Than dropdown -->
-            <div class="flex items-center gap-1.5 bg-slate-900/90 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300">
-              <span>Prune:</span>
-              <button onclick="selectOlderThan(24)" class="hover:text-emerald-400 transition">&gt;24h</button>
-              <span class="text-slate-600">|</span>
-              <button onclick="selectOlderThan(48)" class="hover:text-emerald-400 transition">&gt;48h</button>
-              <span class="text-slate-600">|</span>
-              <button onclick="selectOlderThan(72)" class="hover:text-emerald-400 transition">&gt;3d</button>
+            <div class="flex items-center gap-1.5 bg-white/[0.06] border border-white/[0.08] rounded-xl px-3 py-1.5 text-xs text-white/70">
+              <span class="text-white/40">Prune:</span>
+              <button onclick="selectOlderThan(24)" class="hover:text-[#30D158] transition">&gt;24h</button>
+              <span class="text-white/20">|</span>
+              <button onclick="selectOlderThan(48)" class="hover:text-[#30D158] transition">&gt;48h</button>
+              <span class="text-white/20">|</span>
+              <button onclick="selectOlderThan(72)" class="hover:text-[#30D158] transition">&gt;3d</button>
             </div>
 
-            <!-- Delete Button -->
+            <!-- Delete Button (Apple Destructive Button) -->
             <button 
               id="deleteBtn" 
               onclick="confirmDeleteSelected()" 
               disabled 
-              class="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600/80 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-lg shadow-rose-900/20"
+              class="flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-medium text-white bg-[#FF453A]/90 hover:bg-[#FF453A] disabled:opacity-35 disabled:cursor-not-allowed transition shadow-sm active:scale-[0.98]"
             >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               <span id="deleteBtnText">Delete Selected (0)</span>
             </button>
@@ -436,28 +484,28 @@
         </div>
       </div>
 
-      <!-- Table of Files in /cloudvids -->
-      <div class="glass-card rounded-2xl overflow-hidden">
+      <!-- Table of Files in /cloudvids (macOS Table View) -->
+      <div class="apple-card overflow-hidden">
         <div class="overflow-x-auto custom-scrollbar">
           <table class="w-full text-left text-xs border-collapse">
             <thead>
-              <tr class="border-b border-white/5 bg-slate-900/60 text-slate-400 uppercase tracking-wider font-mono">
+              <tr class="border-b border-white/[0.08] bg-white/[0.02] text-white/50 uppercase tracking-wider font-mono text-[11px]">
                 <th class="py-3.5 px-4 w-10">
-                  <input type="checkbox" id="masterCheckbox" onchange="toggleMasterCheckbox(this.checked)" class="rounded bg-slate-800 border-white/20 text-emerald-500 focus:ring-0 cursor-pointer">
+                  <input type="checkbox" id="masterCheckbox" onchange="toggleMasterCheckbox(this.checked)" class="rounded bg-white/10 border-white/20 text-[#30D158] focus:ring-0 cursor-pointer">
                 </th>
-                <th class="py-3.5 px-4">Preview & Name</th>
-                <th class="py-3.5 px-4">Size</th>
-                <th class="py-3.5 px-4">FS ID</th>
-                <th class="py-3.5 px-4">Added</th>
-                <th class="py-3.5 px-4 text-right">Actions</th>
+                <th class="py-3.5 px-4 font-semibold">Preview & Name</th>
+                <th class="py-3.5 px-4 font-semibold">Size</th>
+                <th class="py-3.5 px-4 font-semibold">FS ID</th>
+                <th class="py-3.5 px-4 font-semibold">Added</th>
+                <th class="py-3.5 px-4 text-right font-semibold">Actions</th>
               </tr>
             </thead>
-            <tbody id="filesTableBody" class="divide-y divide-white/5 text-slate-300">
+            <tbody id="filesTableBody" class="divide-y divide-white/[0.06] text-white/80">
               <!-- Loading state -->
               <tr>
-                <td colspan="6" class="py-16 text-center text-slate-400">
+                <td colspan="6" class="py-16 text-center text-white/40">
                   <div class="inline-flex items-center gap-3">
-                    <div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div class="w-5 h-5 border-2 border-[#30D158] border-t-transparent rounded-full animate-spin"></div>
                     <span>Loading files from /cloudvids...</span>
                   </div>
                 </td>
@@ -468,51 +516,51 @@
 
         <!-- Empty State View (hidden by default) -->
         <div id="emptyState" class="hidden py-16 text-center">
-          <div class="w-12 h-12 rounded-2xl bg-slate-800/80 border border-white/10 flex items-center justify-center mx-auto mb-3 text-slate-400">
+          <div class="w-12 h-12 rounded-[16px] bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-3 text-white/50">
             <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
             </svg>
           </div>
           <h4 class="text-sm font-semibold text-white">No files in /cloudvids</h4>
-          <p class="text-xs text-slate-500 mt-1">Files will appear here when links are resolved in stream or download mode.</p>
+          <p class="text-xs text-white/40 mt-1">Files will appear here when links are resolved in stream or download mode.</p>
         </div>
       </div>
     </div>
-    <!-- Accounts Management View (Tab 2) -->
+    <!-- Accounts Management View (Tab 2 - Apple Fleet Inspector) -->
     <div id="accountsView" class="hidden space-y-6">
       <!-- Outbound Multi-Proxy Rotation Pool Banner / Control -->
-      <div class="glass-card rounded-2xl p-4 border border-cyan-500/20 bg-slate-900/60 space-y-4">
+      <div class="apple-card p-5 space-y-4">
         <div class="flex flex-col md:flex-row items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+            <div class="w-9 h-9 rounded-xl bg-[#64D2FF]/15 border border-[#64D2FF]/25 flex items-center justify-center text-[#64D2FF]">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
               </svg>
             </div>
             <div>
               <div class="flex items-center gap-2">
-                <span class="text-xs font-bold text-white">Smart Outbound Proxy Pool</span>
-                <span id="proxyStatusBadge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-white/5">Direct</span>
-                <span id="proxyPoolStatsBadge" class="hidden px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"></span>
+                <span class="text-xs font-semibold text-white">Smart Outbound Proxy Pool</span>
+                <span id="proxyStatusBadge" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-white/[0.08] text-white/60 border border-white/[0.1]">Direct</span>
+                <span id="proxyPoolStatsBadge" class="hidden px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#64D2FF]/15 text-[#64D2FF] border border-[#64D2FF]/25 font-mono"></span>
               </div>
-              <p id="proxyCurrentText" class="text-[11px] text-slate-400 mt-0.5 font-mono">No proxy pool configured (direct connection)</p>
+              <p id="proxyCurrentText" class="text-[11px] text-white/45 mt-0.5 font-mono">No proxy pool configured (direct connection)</p>
             </div>
           </div>
           <div class="flex items-center gap-2 w-full md:w-auto justify-end">
             <button 
               id="proxyToggleBtn"
               onclick="toggleProxyPanel()" 
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold transition whitespace-nowrap"
+              class="apple-btn-secondary px-3.5 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
             >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <svg class="w-3.5 h-3.5 text-[#64D2FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               <span>Manage Proxies</span>
             </button>
             <button 
               onclick="clearOutboundProxy()" 
-              class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition whitespace-nowrap"
+              class="apple-btn-secondary px-3 py-1.5 rounded-xl text-xs font-medium text-white/70 hover:text-white whitespace-nowrap"
               title="Clear all proxies and use direct connection"
             >
               Clear Pool
@@ -521,69 +569,69 @@
         </div>
 
         <!-- Collapsible Multi-Proxy Management Panel -->
-        <div id="proxyPanel" class="hidden pt-3 border-t border-white/5 space-y-4">
+        <div id="proxyPanel" class="hidden pt-3 border-t border-white/[0.08] space-y-4">
           <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
             <!-- Left: Add/Paste Proxies Form -->
             <div class="lg:col-span-5 space-y-2">
-              <label class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+              <label class="text-[11px] font-semibold text-white/70 flex items-center justify-between">
                 <span>Add / Paste Proxies</span>
-                <span class="text-[10px] text-slate-500 font-mono">One per line</span>
+                <span class="text-[10px] text-white/40 font-mono">One per line</span>
               </label>
               <textarea
                 id="proxyBatchInput"
                 rows="4"
                 placeholder="Paste proxies (Webshare IP:PORT:USER:PASS or http://user:pass@host:port)&#10;e.g.:&#10;64.137.96.74:6641:user:pass&#10;198.23.243.226:6361:user:pass"
-                class="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-cyan-500/50 resize-y"
+                class="w-full bg-white/[0.04] border border-white/[0.1] rounded-xl p-2.5 text-xs text-white placeholder-white/30 font-mono focus:outline-none focus:border-[#0A84FF] resize-y"
               ></textarea>
               <div class="flex items-center gap-2">
                 <button
                   onclick="saveProxyPool(false)"
-                  class="flex-1 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-semibold text-white transition shadow-sm"
+                  class="apple-btn-primary flex-1 py-1.5 rounded-xl text-xs font-medium shadow-sm"
                 >
                   Set as Pool (Replace)
                 </button>
                 <button
                   onclick="saveProxyPool(true)"
-                  class="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition"
+                  class="apple-btn-secondary flex-1 py-1.5 rounded-xl text-xs font-medium"
                 >
                   Append to Pool
                 </button>
               </div>
-              <p class="text-[10px] text-slate-500 leading-relaxed">
-                Supports automatic per-request round-robin rotation, task-level session affinity, and automatic 5-minute quarantine on TeraBox rate-limits or WAF verify blocks.
+              <p class="text-[10px] text-white/40 leading-relaxed">
+                Automatic round-robin rotation, session affinity, and automatic 5-minute quarantine on rate-limits.
               </p>
             </div>
 
             <!-- Right: Active Proxies List -->
             <div class="lg:col-span-7 space-y-2">
-              <label class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+              <label class="text-[11px] font-semibold text-white/70 flex items-center justify-between">
                 <span>Configured Proxy Pool</span>
-                <span id="proxyListCount" class="text-[10px] text-slate-500 font-mono">0 proxies</span>
+                <span id="proxyListCount" class="text-[10px] text-white/40 font-mono">0 proxies</span>
               </label>
-              <div id="proxyItemsContainer" class="max-h-56 overflow-y-auto space-y-1.5 pr-1 text-xs">
+              <div id="proxyItemsContainer" class="max-h-56 overflow-y-auto space-y-1.5 pr-1 text-xs custom-scrollbar">
                 <!-- Proxy rows rendered dynamically -->
-                <div class="text-center py-6 text-slate-500 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>
+                <div class="text-center py-6 text-white/30 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="glass-card rounded-2xl p-5 flex items-center justify-between">
+      <div class="apple-card p-5 flex items-center justify-between">
         <div>
-          <h3 class="text-base font-bold text-white">TeraBox Account Pool</h3>
-          <p class="text-xs text-slate-400 mt-0.5">Manage credentials, tokens, active rotation status and health monitoring.</p>
+          <h3 class="text-base font-semibold text-white">TeraBox Account Pool</h3>
+          <p class="text-xs text-white/45 mt-0.5">Manage credentials, tokens, active rotation status and health monitoring.</p>
         </div>
-        <button onclick="openAccountModal()" class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-900/20 transition">
+        <button onclick="openAccountModal()" class="apple-btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium shadow-sm">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 4v16m8-8H4" />
           </svg>
           <span>Add New Account</span>
         </button>
       </div>
 
       <!-- Environment Match Notice Banner -->
-      <div id="envNoticeBanner" class="hidden glass-card rounded-xl p-3 border border-indigo-500/30 bg-indigo-950/20"></div>
+      <div id="envNoticeBanner" class="hidden apple-card p-3 border border-[#5E5CE6]/30 bg-[#5E5CE6]/[0.06]"></div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" id="accountsGrid">
         <!-- Account cards will render here -->
@@ -592,66 +640,66 @@
 
   </main>
 
-  <!-- Add / Edit Account Modal -->
-  <div id="accountModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-    <div class="glass-card max-w-lg w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-900/60">
-        <h3 id="accountModalTitle" class="text-sm font-bold text-white">Add TeraBox Account</h3>
-        <button onclick="closeAccountModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition">
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+  <!-- Add / Edit Account Modal (macOS Sheet Modal) -->
+  <div id="accountModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="apple-card max-w-lg w-full rounded-[22px] overflow-hidden border border-white/[0.14] shadow-2xl backdrop-blur-2xl">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-white/[0.03]">
+        <h3 id="accountModalTitle" class="text-sm font-semibold text-white">Add TeraBox Account</h3>
+        <button onclick="closeAccountModal()" class="w-7 h-7 rounded-full bg-white/[0.08] hover:bg-white/[0.16] flex items-center justify-center text-white/60 hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-      <form onsubmit="saveAccountForm(event)" class="p-5 space-y-4 text-xs">
+      <form onsubmit="saveAccountForm(event)" class="p-6 space-y-4 text-xs">
         <div>
-          <label class="block font-medium text-slate-300 mb-1">Account Identifier</label>
+          <label class="block font-medium text-white/70 mb-1.5">Account Identifier</label>
           <input 
             type="text" 
             id="accIdInput" 
             placeholder="e.g. account_1, premium_user_2" 
             required 
-            class="w-full bg-slate-900 border border-white/10 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+            class="w-full bg-white/[0.04] border border-white/[0.1] rounded-xl px-3.5 py-2.5 text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] font-mono transition"
           />
         </div>
         <div>
-          <div class="flex items-center justify-between mb-1">
-            <label class="font-medium text-slate-300">Cookie / ndus Token</label>
-            <span class="text-[11px] text-slate-500">Provide full cookie string or ndus value</span>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="font-medium text-white/70">Cookie / ndus Token</label>
+            <span class="text-[11px] text-white/40">Provide full cookie string or ndus value</span>
           </div>
           <textarea 
             id="accCookieInput" 
             rows="3" 
             placeholder="ndus=... or full cookie string (ndus=...; PANWEB=1; ...)" 
-            class="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono custom-scrollbar"
+            class="w-full bg-white/[0.04] border border-white/[0.1] rounded-xl p-3 text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] font-mono custom-scrollbar transition"
           ></textarea>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block font-medium text-slate-300 mb-1">bds_token (optional)</label>
+            <label class="block font-medium text-white/70 mb-1.5">bds_token (optional)</label>
             <input 
               type="text" 
               id="accBdsInput" 
               placeholder="Auto-scraped if empty" 
-              class="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+              class="w-full bg-white/[0.04] border border-white/[0.1] rounded-xl px-3.5 py-2 text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] font-mono transition"
             />
           </div>
           <div>
-            <label class="block font-medium text-slate-300 mb-1">js_token (optional)</label>
+            <label class="block font-medium text-white/70 mb-1.5">js_token (optional)</label>
             <input 
               type="text" 
               id="accJsInput" 
               placeholder="Auto-scraped if empty" 
-              class="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 font-mono"
+              class="w-full bg-white/[0.04] border border-white/[0.1] rounded-xl px-3.5 py-2 text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] font-mono transition"
             />
           </div>
         </div>
 
-        <div class="pt-2 flex items-center justify-end gap-2.5">
-          <button type="button" onclick="closeAccountModal()" class="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition">
+        <div class="pt-3 flex items-center justify-end gap-2.5">
+          <button type="button" onclick="closeAccountModal()" class="apple-btn-secondary px-4 py-2 rounded-xl text-xs font-medium">
             Cancel
           </button>
-          <button type="submit" id="saveAccSubmitBtn" class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 font-semibold text-white transition">
+          <button type="submit" id="saveAccSubmitBtn" class="apple-btn-primary flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold shadow-sm">
             <span>Save & Validate</span>
           </button>
         </div>
@@ -659,25 +707,25 @@
     </div>
   </div>
 
-  <!-- Video Preview Modal -->
+  <!-- Video Preview Modal (macOS Sheet Modal) -->
   <div id="previewModal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-    <div class="glass-card max-w-3xl w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-900/60">
+    <div class="apple-card max-w-3xl w-full rounded-[22px] overflow-hidden border border-white/[0.14] shadow-2xl backdrop-blur-2xl">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-white/[0.03]">
         <div class="truncate pr-4">
-          <h3 id="modalFilename" class="text-sm font-bold text-white truncate">Video Preview</h3>
-          <p id="modalFsid" class="text-xs font-mono text-slate-400 mt-0.5">fs_id: --</p>
+          <h3 id="modalFilename" class="text-sm font-semibold text-white truncate">Video Preview</h3>
+          <p id="modalFsid" class="text-xs font-mono text-white/50 mt-0.5">fs_id: --</p>
         </div>
-        <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition">
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        <button onclick="closePreviewModal()" class="w-7 h-7 rounded-full bg-white/[0.08] hover:bg-white/[0.16] flex items-center justify-center text-white/60 hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-      <div class="p-5 space-y-4">
-        <div class="aspect-video bg-black rounded-xl overflow-hidden relative border border-white/5 flex items-center justify-center">
+      <div class="p-6 space-y-4">
+        <div class="aspect-video bg-black rounded-[16px] overflow-hidden relative border border-white/[0.08] flex items-center justify-center">
           <video id="previewPlayer" controls class="w-full h-full object-contain"></video>
         </div>
-        <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+        <div class="flex items-center justify-between text-xs font-mono text-white/50">
           <span id="modalPath">Path: --</span>
           <span id="modalSize">Size: --</span>
         </div>
@@ -685,10 +733,10 @@
     </div>
   </div>
 
-  <!-- Notification Toast -->
+  <!-- Notification Toast (Apple Dynamic Capsule) -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
-    <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900 border border-white/10 shadow-2xl text-xs font-medium text-white">
-      <span id="toastIcon" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+    <div class="flex items-center gap-3 px-5 py-2.5 rounded-full bg-[#1C1C1E]/90 backdrop-blur-2xl border border-white/[0.14] shadow-2xl text-xs font-medium text-white">
+      <span id="toastIcon" class="w-2 h-2 rounded-full bg-[#30D158]"></span>
       <span id="toastMsg">Success</span>
     </div>
   </div>
@@ -822,43 +870,43 @@
         const thumbSrc = file.thumbnail || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23334155"%3E%3Cpath d="M4 4h16v16H4z"/%3E%3C/svg%3E';
 
         html += `
-          <tr class="hover:bg-white/[0.02] transition group ${isChecked ? 'bg-emerald-500/[0.04]' : ''}">
+          <tr class="hover:bg-white/[0.03] transition group ${isChecked ? 'bg-[#0A84FF]/[0.06]' : ''}">
             <td class="py-3 px-4">
-              <input type="checkbox" onchange="toggleSelectPath('${escapeQuotes(file.path)}', this.checked)" ${isChecked ? 'checked' : ''} class="rounded bg-slate-800 border-white/20 text-emerald-500 focus:ring-0 cursor-pointer">
+              <input type="checkbox" onchange="toggleSelectPath('${escapeQuotes(file.path)}', this.checked)" ${isChecked ? 'checked' : ''} class="rounded-[4px] bg-white/[0.08] border-white/20 text-[#0A84FF] focus:ring-0 cursor-pointer">
             </td>
             <td class="py-3 px-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-9 rounded-lg overflow-hidden bg-slate-900 border border-white/10 flex-shrink-0 flex items-center justify-center relative group-hover:border-emerald-500/30 transition">
+                <div class="w-12 h-9 rounded-[10px] overflow-hidden bg-white/[0.04] border border-white/[0.1] flex-shrink-0 flex items-center justify-center relative group-hover:border-[#0A84FF]/40 transition">
                   <img src="${thumbSrc}" alt="thumb" class="w-full h-full object-cover" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 24 24\\' fill=\\'%23334155\\'%3E%3Cpath d=\\'M4 4h16v16H4z\\'/ %3E%3C/svg%3E'">
                 </div>
                 <div class="min-w-0 max-w-md">
-                  <div class="font-medium text-white truncate hover:text-emerald-300 cursor-pointer" onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="${escapeQuotes(file.filename)}">
+                  <div class="font-medium text-white/90 truncate hover:text-[#0A84FF] cursor-pointer" onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="${escapeQuotes(file.filename)}">
                     ${file.filename}
                   </div>
-                  <div class="text-[11px] font-mono text-slate-500 truncate">${file.path}</div>
+                  <div class="text-[11px] font-mono text-white/40 truncate mt-0.5">${file.path}</div>
                 </div>
               </div>
             </td>
-            <td class="py-3 px-4 font-mono font-medium text-slate-300">
+            <td class="py-3 px-4 font-mono font-medium text-white/80">
               ${file.size_mb} MB
             </td>
-            <td class="py-3 px-4 font-mono text-slate-400">
+            <td class="py-3 px-4 font-mono text-white/50 text-[11px]">
               ${file.fs_id}
             </td>
-            <td class="py-3 px-4 text-slate-400 text-[11px] font-mono whitespace-nowrap">
+            <td class="py-3 px-4 text-white/50 text-[11px] font-mono whitespace-nowrap">
               ${dateStr}
             </td>
             <td class="py-3 px-4 text-right whitespace-nowrap">
-              <div class="inline-flex items-center gap-2">
-                <button onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="Play / Preview" class="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+              <div class="inline-flex items-center gap-1.5">
+                <button onclick="openPreview('${escapeQuotes(file.path)}', '${escapeQuotes(file.filename)}', '${file.fs_id}', '${file.size_mb}')" title="Play / Preview" class="p-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white transition">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </button>
-                <button onclick="deleteSingleFile('${escapeQuotes(file.path)}')" title="Delete" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition">
+                <button onclick="deleteSingleFile('${escapeQuotes(file.path)}')" title="Delete" class="p-2 rounded-xl bg-[#FF453A]/10 hover:bg-[#FF453A]/20 text-[#FF453A] transition">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
                 </button>
               </div>
@@ -1007,10 +1055,9 @@
       filesView.classList.add('hidden');
       accountsView.classList.add('hidden');
 
-      // Reset button classes
-      const inactiveBtnClass = 'px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition flex items-center gap-2';
-      const activeCyanBtnClass = 'px-3.5 py-1.5 rounded-lg font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 transition flex items-center gap-2';
-      const activeEmeraldBtnClass = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition flex items-center gap-2';
+      // Reset button classes (Apple Segmented Control styles)
+      const inactiveBtnClass = 'px-4 py-1.5 rounded-xl text-xs font-medium text-white/60 hover:text-white hover:bg-white/[0.04] transition-all flex items-center gap-2';
+      const activeBtnClass = 'px-4 py-1.5 rounded-xl text-xs font-semibold text-white bg-white/[0.14] border border-white/[0.12] shadow-sm backdrop-blur-xl transition-all flex items-center gap-2';
 
       tabAnalyticsBtn.className = inactiveBtnClass;
       tabFilesBtn.className = inactiveBtnClass;
@@ -1019,18 +1066,18 @@
       if (tab === 'analytics') {
         analyticsView.classList.remove('hidden');
         accSelectWrap.classList.add('hidden');
-        tabAnalyticsBtn.className = activeCyanBtnClass;
+        tabAnalyticsBtn.className = activeBtnClass;
         loadAnalytics();
       } else if (tab === 'files') {
         filesView.classList.remove('hidden');
         accSelectWrap.classList.remove('hidden');
-        tabFilesBtn.className = activeEmeraldBtnClass;
+        tabFilesBtn.className = activeBtnClass;
         loadQuota();
         loadFiles();
       } else {
         accountsView.classList.remove('hidden');
         accSelectWrap.classList.add('hidden');
-        tabAccountsBtn.className = activeEmeraldBtnClass;
+        tabAccountsBtn.className = activeBtnClass;
         loadAccounts();
       }
     }
@@ -1116,8 +1163,8 @@
           const sRate = traf.success_rate_percent ?? 100;
           succRateEl.textContent = `${sRate}% OK`;
           succRateEl.className = sRate >= 95 
-            ? 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20'
-            : 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20';
+            ? 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30'
+            : 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30';
         }
 
         const avgLatEl = document.getElementById('statAvgLatency');
@@ -1156,11 +1203,11 @@
         if (routeContainer && traf.routes) {
           const total = Math.max(traf.total_requests || 1, 1);
           const routeMeta = [
-            { key: 'resolve', name: '/api/resolve (Link Metadata)', color: 'bg-emerald-500', barBg: 'from-emerald-500 to-teal-400' },
-            { key: 'stream', name: '/api/stream (HLS Segments)', color: 'bg-cyan-500', barBg: 'from-cyan-500 to-blue-500' },
-            { key: 'download', name: '/api/download (Direct Chunks)', color: 'bg-indigo-500', barBg: 'from-indigo-500 to-violet-500' },
-            { key: 'thumbnail', name: '/api/thumbnail (Media CDN)', color: 'bg-amber-500', barBg: 'from-amber-500 to-orange-400' },
-            { key: 'admin', name: '/api/admin & Management', color: 'bg-slate-400', barBg: 'from-slate-500 to-slate-400' },
+            { key: 'resolve', name: '/api/resolve (Link Metadata)', color: 'bg-[#0A84FF]', barBg: 'from-[#0A84FF] to-[#64D2FF]' },
+            { key: 'stream', name: '/api/stream (HLS Segments)', color: 'bg-[#30D158]', barBg: 'from-[#30D158] to-[#64D2FF]' },
+            { key: 'download', name: '/api/download (Direct Chunks)', color: 'bg-[#BF5AF2]', barBg: 'from-[#5E5CE6] to-[#BF5AF2]' },
+            { key: 'thumbnail', name: '/api/thumbnail (Media CDN)', color: 'bg-[#FF9F0A]', barBg: 'from-[#FF9F0A] to-[#FFD60A]' },
+            { key: 'admin', name: '/api/admin & Management', color: 'bg-[#8E8E93]', barBg: 'from-[#8E8E93] to-white/60' },
           ];
 
           routeContainer.innerHTML = routeMeta.map(m => {
@@ -1168,11 +1215,11 @@
             const pct = Math.min(100, (count / total * 100)).toFixed(1);
             return `
               <div>
-                <div class="flex items-center justify-between text-xs mb-1">
-                  <span class="text-slate-300 font-medium">${m.name}</span>
-                  <span class="font-mono text-slate-400">${count.toLocaleString()} <span class="text-[10px] text-slate-500">(${pct}%)</span></span>
+                <div class="flex items-center justify-between text-xs mb-1.5">
+                  <span class="text-white/80 font-medium">${m.name}</span>
+                  <span class="font-mono text-white/50 text-[11px]">${count.toLocaleString()} <span class="text-[10px] text-white/30">(${pct}%)</span></span>
                 </div>
-                <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-white/5">
+                <div class="w-full bg-white/[0.05] rounded-full h-1.5 overflow-hidden border border-white/[0.04]">
                   <div class="h-full rounded-full bg-gradient-to-r ${m.barBg} transition-all duration-500" style="width: ${pct}%"></div>
                 </div>
               </div>
@@ -1191,32 +1238,32 @@
         const proxyFleetContainer = document.getElementById('proxyFleetContainer');
         if (proxyFleetContainer && proxies.proxies) {
           if (proxies.proxies.length === 0) {
-            proxyFleetContainer.innerHTML = '<div class="text-center py-6 text-slate-500">No proxies configured in pool.</div>';
+            proxyFleetContainer.innerHTML = '<div class="text-center py-6 text-white/40 text-xs">No proxies configured in pool.</div>';
           } else {
             proxyFleetContainer.innerHTML = proxies.proxies.map(p => {
               const isCooling = p.status === 'cooldown';
               const probe = proxyProbeResultsMap[p.raw_url] || proxyProbeResultsMap[p.url];
-              const latBadge = probe ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono ${probe.status === 'healthy' ? 'text-teal-400 bg-teal-500/10' : 'text-rose-400 bg-rose-500/10'}">${probe.latency_ms}ms</span>` : '';
+              const latBadge = probe ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-mono ${probe.status === 'healthy' ? 'text-[#30D158] bg-[#30D158]/10 border border-[#30D158]/20' : 'text-[#FF453A] bg-[#FF453A]/10 border border-[#FF453A]/20'}">${probe.latency_ms}ms</span>` : '';
 
               const badge = isCooling
-                ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">Cooldown (${p.cooldown_remaining}s)</span>`
-                : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Healthy</span>`;
+                ? `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30">Cooldown (${p.cooldown_remaining}s)</span>`
+                : `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30">Healthy</span>`;
 
-              const lastErr = p.last_error ? `<div class="text-[10px] text-amber-400/80 truncate mt-0.5" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</div>` : '';
+              const lastErr = p.last_error ? `<div class="text-[10px] text-[#FF9F0A]/90 truncate mt-0.5" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</div>` : '';
 
               return `
-                <div class="p-2.5 rounded-xl bg-slate-950/60 border border-white/5 hover:border-teal-500/30 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.14] transition flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <div class="min-w-0">
                     <div class="flex items-center gap-2">
-                      <span class="w-2 h-2 rounded-full ${isCooling ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}"></span>
-                      <span class="font-mono text-xs text-white font-semibold truncate">${escapeQuotes(p.url)}</span>
+                      <span class="w-2 h-2 rounded-full ${isCooling ? 'bg-[#FF9F0A] animate-pulse' : 'bg-[#30D158]'}"></span>
+                      <span class="font-mono text-xs text-white/90 font-semibold truncate">${escapeQuotes(p.url)}</span>
                       ${latBadge}
                     </div>
                     ${lastErr}
                   </div>
                   <div class="flex items-center gap-3 shrink-0">
-                    <div class="text-[11px] font-mono text-slate-400">
-                      <span class="text-emerald-400 font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-rose-400 font-semibold' : 'text-slate-500'}">${p.failure_count || 0}</span> err
+                    <div class="text-[11px] font-mono text-white/50">
+                      <span class="text-[#30D158] font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-[#FF453A] font-semibold' : 'text-white/30'}">${p.failure_count || 0}</span> err
                     </div>
                     ${badge}
                   </div>
@@ -1246,38 +1293,38 @@
       });
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div class="text-center py-6 text-slate-500">No events recorded in this filter.</div>';
+        container.innerHTML = '<div class="text-center py-6 text-white/40 text-xs">No events recorded in this filter.</div>';
         return;
       }
 
       container.innerHTML = filtered.map(ev => {
-        let badgeColor = 'bg-slate-800 text-slate-400 border-white/5';
-        let dotColor = 'bg-slate-400';
+        let badgeColor = 'bg-white/[0.08] text-white/60 border-white/[0.08]';
+        let dotColor = 'bg-white/40';
         if (ev.level === 'success') {
-          badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-          dotColor = 'bg-emerald-400';
+          badgeColor = 'bg-[#30D158]/15 text-[#30D158] border-[#30D158]/25';
+          dotColor = 'bg-[#30D158]';
         } else if (ev.level === 'warning') {
-          badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-          dotColor = 'bg-amber-400';
+          badgeColor = 'bg-[#FF9F0A]/15 text-[#FF9F0A] border-[#FF9F0A]/25';
+          dotColor = 'bg-[#FF9F0A]';
         } else if (ev.level === 'error') {
-          badgeColor = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-          dotColor = 'bg-rose-400';
+          badgeColor = 'bg-[#FF453A]/15 text-[#FF453A] border-[#FF453A]/25';
+          dotColor = 'bg-[#FF453A]';
         } else if (ev.type === 'proxy_probe') {
-          badgeColor = 'bg-teal-500/10 text-teal-400 border-teal-500/20';
-          dotColor = 'bg-teal-400';
+          badgeColor = 'bg-[#64D2FF]/15 text-[#64D2FF] border-[#64D2FF]/25';
+          dotColor = 'bg-[#64D2FF]';
         }
 
         return `
-          <div class="flex items-start justify-between gap-3 p-2 rounded-xl bg-slate-950/40 border border-white/5 hover:bg-slate-950/80 transition">
+          <div class="flex items-start justify-between gap-3 p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition">
             <div class="flex items-start gap-2.5 min-w-0">
               <span class="w-1.5 h-1.5 rounded-full ${dotColor} mt-1.5 shrink-0"></span>
               <div class="min-w-0">
-                <span class="text-slate-200 text-xs">${escapeQuotes(ev.message)}</span>
+                <span class="text-white/90 text-xs">${escapeQuotes(ev.message)}</span>
               </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
-              <span class="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeColor}">${ev.type || 'SYSTEM'}</span>
-              <span class="text-[10px] text-slate-500">${timeAgo(ev.timestamp)}</span>
+              <span class="px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeColor}">${ev.type || 'SYSTEM'}</span>
+              <span class="text-[10px] text-white/40 font-mono">${timeAgo(ev.timestamp)}</span>
             </div>
           </div>
         `;
@@ -1290,8 +1337,8 @@
       const warnBtn = document.getElementById('evFilterWarn');
       const okBtn = document.getElementById('evFilterOk');
 
-      const activeClass = 'px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-semibold border border-indigo-500/30 transition';
-      const inactiveClass = 'px-2.5 py-1 rounded-lg text-slate-400 hover:text-white font-medium transition';
+      const activeClass = 'px-3 py-1 rounded-lg bg-white/[0.14] text-white font-semibold border border-white/[0.12] shadow-sm transition';
+      const inactiveClass = 'px-3 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/[0.04] font-medium transition';
 
       if (allBtn) allBtn.className = level === 'all' ? activeClass : inactiveClass;
       if (warnBtn) warnBtn.className = level === 'warning' ? activeClass : inactiveClass;
@@ -1350,14 +1397,14 @@
           activeAccId = data.active_account_id;
 
           const select = document.getElementById('accountSelect');
-          select.innerHTML = '<option value="" class="bg-slate-900">Active Account</option>';
+          select.innerHTML = '<option value="" class="bg-[#1C1C1E] text-white">Active Account</option>';
           const count = Object.keys(accountsPoolData).length;
           document.getElementById('accCountBadge').textContent = count;
 
           Object.entries(accountsPoolData).forEach(([id, acc]) => {
             const opt = document.createElement('option');
             opt.value = id;
-            opt.className = 'bg-slate-900';
+            opt.className = 'bg-[#1C1C1E] text-white';
             
             let label = id;
             if (acc.is_env_account) {
@@ -1387,24 +1434,24 @@
           if (proxyBadge && proxyText) {
             if (pool.total > 0) {
               proxyBadge.textContent = 'Pool Active';
-              proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+              proxyBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/30';
               
               if (proxyStatsBadge) {
                 proxyStatsBadge.classList.remove('hidden');
                 proxyStatsBadge.textContent = `${pool.healthy}/${pool.total} Healthy${pool.cooldown > 0 ? ` (${pool.cooldown} Quarantined)` : ''}`;
                 proxyStatsBadge.className = pool.cooldown > 0 
-                  ? 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                  : 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20';
+                  ? 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30'
+                  : 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/30';
               }
               proxyText.textContent = `Rotating across ${pool.total} proxies (Round-Robin with Auto-Quarantine)`;
             } else if (data.outbound_proxy) {
               proxyBadge.textContent = 'Active (Single)';
-              proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+              proxyBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/30';
               if (proxyStatsBadge) proxyStatsBadge.classList.add('hidden');
               proxyText.textContent = `Single proxy: ${data.outbound_proxy}`;
             } else {
               proxyBadge.textContent = 'Direct';
-              proxyBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-white/5';
+              proxyBadge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-white/[0.08] text-white/50 border border-white/[0.08]';
               if (proxyStatsBadge) proxyStatsBadge.classList.add('hidden');
               proxyText.textContent = 'No proxy configured (using hosted IP directly)';
             }
@@ -1419,18 +1466,18 @@
               proxyItemsContainer.innerHTML = pool.proxies.map(p => {
                 const isCooldown = p.status === 'cooldown';
                 const statusBadge = isCooldown
-                  ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">Cooldown (${p.cooldown_remaining}s)</span>`
-                  : `<span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Healthy</span>`;
+                  ? `<span class="px-2 py-0.5 rounded-md text-[9px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30">Cooldown (${p.cooldown_remaining}s)</span>`
+                  : `<span class="px-2 py-0.5 rounded-md text-[9px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30">Healthy</span>`;
                 
-                const stats = `<span class="text-[10px] text-slate-400 font-mono"><span class="text-emerald-400 font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-rose-400 font-semibold' : 'text-slate-500'}">${p.failure_count || 0}</span> err</span>`;
-                const lastErr = p.last_error ? `<span class="text-[9px] text-amber-400/80 truncate max-w-xs block" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</span>` : '';
+                const stats = `<span class="text-[10px] text-white/50 font-mono"><span class="text-[#30D158] font-semibold">${p.success_count || 0}</span> ok / <span class="${p.failure_count > 0 ? 'text-[#FF453A] font-semibold' : 'text-white/30'}">${p.failure_count || 0}</span> err</span>`;
+                const lastErr = p.last_error ? `<span class="text-[9px] text-[#FF9F0A]/90 truncate max-w-xs block" title="${escapeQuotes(p.last_error)}">${escapeQuotes(p.last_error)}</span>` : '';
 
                 return `
-                  <div class="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/60 border border-white/5 hover:border-cyan-500/20 transition">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <span class="w-1.5 h-1.5 rounded-full ${isCooldown ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}"></span>
+                  <div class="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.14] transition">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                      <span class="w-1.5 h-1.5 rounded-full ${isCooldown ? 'bg-[#FF9F0A] animate-pulse' : 'bg-[#30D158]'}"></span>
                       <div class="min-w-0">
-                        <div class="font-mono text-[11px] text-white truncate">${escapeQuotes(p.url)}</div>
+                        <div class="font-mono text-[11px] text-white/90 truncate">${escapeQuotes(p.url)}</div>
                         ${lastErr}
                       </div>
                     </div>
@@ -1442,7 +1489,7 @@
                 `;
               }).join('');
             } else {
-              proxyItemsContainer.innerHTML = '<div class="text-center py-6 text-slate-500 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>';
+              proxyItemsContainer.innerHTML = '<div class="text-center py-6 text-white/40 text-[11px]">No proxies configured yet. Paste your proxies on the left.</div>';
             }
           }
 
@@ -1456,14 +1503,14 @@
               banner.innerHTML = `
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
-                    <span class="text-slate-300">Environment (<code class="text-indigo-300 font-mono font-bold">.env</code>) is linked to:</span>
-                    <span class="font-bold text-white font-mono bg-indigo-500/20 px-2 py-0.5 rounded-lg border border-indigo-500/40">${envId}</span>
-                    ${envAcc.username ? `<span class="text-slate-400 font-semibold font-sans">(${escapeQuotes(envAcc.username)}${envAcc.email ? ' &bull; ' + escapeQuotes(envAcc.email) : ''})</span>` : ''}
+                    <span class="w-2 h-2 rounded-full bg-[#5E5CE6]"></span>
+                    <span class="text-white/70">Environment (<code class="text-[#5E5CE6] font-mono font-semibold">.env</code>) is linked to:</span>
+                    <span class="font-semibold text-white font-mono bg-[#5E5CE6]/20 px-2 py-0.5 rounded-lg border border-[#5E5CE6]/40">${envId}</span>
+                    ${envAcc.username ? `<span class="text-white/50 font-medium font-sans">(${escapeQuotes(envAcc.username)}${envAcc.email ? ' &bull; ' + escapeQuotes(envAcc.email) : ''})</span>` : ''}
                   </div>
                   <div class="flex items-center gap-2">
-                    <span class="text-[11px] text-indigo-300/80 font-mono">Status: ${envAcc.status || 'healthy'}</span>
-                    ${envId !== activeAccId ? `<button onclick="activateAccount('${escapeQuotes(envId)}')" class="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-[11px] font-semibold transition">Activate .ENV Account</button>` : '<span class="text-[10px] font-mono font-bold text-emerald-400 uppercase bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">Currently Active</span>'}
+                    <span class="text-[11px] text-[#5E5CE6]/90 font-mono">Status: ${envAcc.status || 'healthy'}</span>
+                    ${envId !== activeAccId ? `<button onclick="activateAccount('${escapeQuotes(envId)}')" class="px-3 py-1 rounded-xl bg-[#5E5CE6]/20 hover:bg-[#5E5CE6]/30 text-[#5E5CE6] border border-[#5E5CE6]/40 text-[11px] font-semibold transition">Activate .ENV Account</button>` : '<span class="text-[10px] font-mono font-semibold text-[#30D158] uppercase bg-[#30D158]/15 px-2.5 py-0.5 rounded-full border border-[#30D158]/30">Currently Active</span>'}
                   </div>
                 </div>
               `;
@@ -1486,15 +1533,15 @@
       const entries = Object.entries(accountsPoolData);
       if (entries.length === 0) {
         grid.innerHTML = `
-          <div class="col-span-full py-16 text-center glass-card rounded-2xl p-8">
-            <div class="w-12 h-12 rounded-2xl bg-slate-800/80 border border-white/10 flex items-center justify-center mx-auto mb-3 text-slate-400">
+          <div class="col-span-full py-16 text-center apple-card rounded-[22px] p-8">
+            <div class="w-12 h-12 rounded-[16px] bg-white/[0.06] border border-white/[0.1] flex items-center justify-center mx-auto mb-3 text-white/50">
               <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
             <h4 class="text-sm font-semibold text-white">No accounts in the Redis pool</h4>
-            <p class="text-xs text-slate-500 mt-1 max-w-sm mx-auto">The API is currently falling back to your default .env credentials. Add accounts to enable automatic rotation and high availability.</p>
-            <button onclick="openAccountModal()" class="mt-4 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white transition">Add First Account</button>
+            <p class="text-xs text-white/50 mt-1 max-w-sm mx-auto">The API is currently falling back to your default .env credentials. Add accounts to enable automatic rotation and high availability.</p>
+            <button onclick="openAccountModal()" class="apple-btn-primary mt-4 px-4 py-2 rounded-xl text-xs font-medium">Add First Account</button>
           </div>
         `;
         return;
@@ -1509,96 +1556,96 @@
         const initial = (acc.username || id).charAt(0).toUpperCase();
 
         const avatarMarkup = acc.avatar_url 
-          ? `<img src="${acc.avatar_url}" alt="avatar" class="w-10 h-10 rounded-xl object-cover border border-white/10 shadow-sm flex-shrink-0" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center font-bold text-white font-mono text-sm\\'>${initial}</div>'">`
-          : `<div class="w-10 h-10 rounded-xl bg-gradient-to-tr ${isEnv ? 'from-indigo-500 to-purple-500' : 'from-emerald-500 to-teal-400'} flex items-center justify-center font-bold text-white font-mono text-sm shadow-sm flex-shrink-0">${initial}</div>`;
+          ? `<img src="${acc.avatar_url}" alt="avatar" class="w-11 h-11 rounded-[14px] object-cover border border-white/[0.12] shadow-sm flex-shrink-0" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'w-11 h-11 rounded-[14px] bg-gradient-to-tr from-[#0A84FF] to-[#64D2FF] flex items-center justify-center font-bold text-white font-mono text-sm\\'>${initial}</div>'">`
+          : `<div class="w-11 h-11 rounded-[14px] bg-gradient-to-tr ${isEnv ? 'from-[#5E5CE6] to-[#BF5AF2]' : 'from-[#0A84FF] to-[#64D2FF]'} flex items-center justify-center font-bold text-white font-mono text-sm shadow-sm flex-shrink-0">${initial}</div>`;
 
         html += `
-          <div class="glass-card rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between border ${isActive ? 'border-emerald-500/50 shadow-xl shadow-emerald-950/30' : isEnv ? 'border-indigo-500/40 shadow-lg shadow-indigo-950/20' : 'border-white/5'}">
+          <div class="apple-card rounded-[22px] p-5 relative overflow-hidden flex flex-col justify-between border ${isActive ? 'border-[#30D158]/50 shadow-[0_4px_24px_-2px_rgba(48,209,88,0.15)] ring-1 ring-[#30D158]/20' : isEnv ? 'border-[#5E5CE6]/40 shadow-[0_4px_24px_-2px_rgba(94,92,230,0.12)]' : 'border-white/[0.08]'}">
             <div>
-              <div class="flex items-center justify-between mb-3.5">
+              <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3 min-w-0">
                   ${avatarMarkup}
                   <div class="min-w-0">
                     <div class="flex items-center gap-1.5 flex-wrap">
-                      <h4 class="text-sm font-bold font-mono text-white truncate" title="${escapeQuotes(id)}">${id}</h4>
-                      ${isEnv ? '<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>.ENV Match</span>' : ''}
+                      <h4 class="text-sm font-semibold font-mono text-white truncate" title="${escapeQuotes(id)}">${id}</h4>
+                      ${isEnv ? '<span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[#5E5CE6]/15 text-[#5E5CE6] border border-[#5E5CE6]/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-[#5E5CE6]"></span>.ENV Match</span>' : ''}
                     </div>
-                    <p class="text-xs text-slate-300 font-semibold truncate mt-0.5">${escapeQuotes(acc.username || 'No Profile Name')}</p>
+                    <p class="text-xs text-white/70 font-medium truncate mt-0.5">${escapeQuotes(acc.username || 'No Profile Name')}</p>
                   </div>
                 </div>
                 <div>
                   ${isActive 
-                    ? '<span class="text-[10px] font-mono font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Active</span>'
-                    : `<button onclick="activateAccount('${escapeQuotes(id)}')" class="text-[11px] font-medium text-slate-400 hover:text-emerald-400 hover:underline">Set Active</button>`
+                    ? '<span class="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30">Active</span>'
+                    : `<button onclick="activateAccount('${escapeQuotes(id)}')" class="text-[11px] font-medium text-white/50 hover:text-[#0A84FF] transition">Set Active</button>`
                   }
                 </div>
               </div>
 
-              <!-- Profile Details -->
-              <div class="bg-slate-900/60 rounded-xl p-3 mb-3 border border-white/5 space-y-1.5 text-xs">
+              <!-- Profile Details (macOS Grouped List) -->
+              <div class="bg-white/[0.03] rounded-[16px] p-3 mb-3 border border-white/[0.06] space-y-1.5 text-xs">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-400 flex items-center gap-1">
-                    <svg class="w-3.5 h-3.5 text-rose-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <span class="text-white/50 flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-[#FF9F0A] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                     </svg>
                     Email / Gmail:
                   </span>
-                  <span class="font-mono text-slate-200 truncate font-medium text-right" title="${escapeQuotes(acc.email || '')}">${acc.email || '<span class="text-slate-500">None</span>'}</span>
+                  <span class="font-mono text-white/90 truncate font-medium text-right text-[11px]" title="${escapeQuotes(acc.email || '')}">${acc.email || '<span class="text-white/30">None</span>'}</span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-slate-400 flex items-center gap-1">
-                    <svg class="w-3.5 h-3.5 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <span class="text-white/50 flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5 text-[#0A84FF] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
                     </svg>
                     User UK:
                   </span>
-                  <span class="font-mono text-slate-300 text-[11px]">${acc.uk || '--'}</span>
+                  <span class="font-mono text-white/80 text-[11px]">${acc.uk || '--'}</span>
                 </div>
               </div>
 
-              <div class="space-y-1.5 text-xs font-mono text-slate-400">
+              <div class="space-y-1.5 text-xs font-mono text-white/50">
                 <div class="flex items-center justify-between">
                   <span>Status:</span>
-                  <span class="${isHealthy ? 'text-emerald-400' : 'text-rose-400 font-bold'} flex items-center gap-1">
-                    <span class="w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-emerald-400' : 'bg-rose-500 animate-pulse'}"></span>
+                  <span class="${isHealthy ? 'text-[#30D158]' : 'text-[#FF453A] font-semibold'} flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-[#30D158]' : 'bg-[#FF453A] animate-pulse'}"></span>
                     ${acc.status || 'healthy'}
                   </span>
                 </div>
                 ${!isHealthy && acc.unhealthy_reason ? `
-                <div class="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-300 font-sans break-words mt-1.5">
-                  <span class="font-semibold text-rose-400 font-mono">Flagged Reason:</span> ${escapeQuotes(acc.unhealthy_reason)}
+                <div class="p-2.5 rounded-xl bg-[#FF453A]/10 border border-[#FF453A]/20 text-[11px] text-[#FF453A] font-sans break-words mt-1.5">
+                  <span class="font-semibold text-[#FF453A] font-mono">Flagged Reason:</span> ${escapeQuotes(acc.unhealthy_reason)}
                 </div>` : ''}
                 <div class="flex items-center justify-between">
                   <span>Cookie:</span>
-                  <span class="text-slate-300 truncate max-w-[150px]">${acc.cookie || 'not set'}</span>
+                  <span class="text-white/80 truncate max-w-[150px]">${acc.cookie || 'not set'}</span>
                 </div>
                 <div class="flex items-center justify-between">
                   <span>bds_token:</span>
-                  <span class="text-slate-300">${acc.bds_token || 'auto'}</span>
+                  <span class="text-white/80">${acc.bds_token || 'auto'}</span>
                 </div>
                 <div class="flex items-center justify-between">
                   <span>Last Used:</span>
-                  <span class="text-slate-300 text-[11px]">${lastUsedStr}</span>
+                  <span class="text-white/70 text-[11px]">${lastUsedStr}</span>
                 </div>
               </div>
             </div>
 
-            <div class="flex items-center justify-between pt-4 mt-4 border-t border-white/5 text-xs gap-2">
+            <div class="flex items-center justify-between pt-3.5 mt-3.5 border-t border-white/[0.06] text-xs gap-2">
               <div class="flex items-center gap-2">
-                <button onclick="editAccount('${escapeQuotes(id)}')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                <button onclick="editAccount('${escapeQuotes(id)}')" class="apple-btn-secondary flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
                   <span>Edit</span>
                 </button>
-                <button onclick="verifyAccount('${escapeQuotes(id)}')" title="Re-test credentials with TeraBox" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${isHealthy ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white' : 'bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold'} transition">
+                <button onclick="verifyAccount('${escapeQuotes(id)}')" title="Re-test credentials with TeraBox" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl ${isHealthy ? 'apple-btn-secondary text-white/70' : 'bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/30 text-[#30D158] font-semibold'} transition">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>Re-test</span>
                 </button>
               </div>
-              <button onclick="deleteAccount('${escapeQuotes(id)}')" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition" title="Delete account">
+              <button onclick="deleteAccount('${escapeQuotes(id)}')" class="p-2 rounded-xl bg-[#FF453A]/10 hover:bg-[#FF453A]/20 text-[#FF453A] transition" title="Delete account">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>

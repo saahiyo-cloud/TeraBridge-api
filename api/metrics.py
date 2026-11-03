@@ -13,6 +13,7 @@ from __future__ import annotations
 import collections
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -28,13 +29,61 @@ MAX_LATENCY_SAMPLES = 200
 # ── In-Memory Ring Buffers & Counters ─────────────────────────────────
 _start_time = time.time()
 _local_counters: dict[str, int] = collections.defaultdict(int)
+_max_seen_counters: dict[str, int] = collections.defaultdict(int)
 _latency_samples: collections.deque[float] = collections.deque(maxlen=MAX_LATENCY_SAMPLES)
 _local_events: collections.deque[dict[str, Any]] = collections.deque(maxlen=MAX_EVENTS_LOG)
+
+_pending_lock = threading.Lock()
+_pending_increments: dict[str, int] = collections.defaultdict(int)
+_last_flush_time: float = 0.0
 
 
 def set_metrics_start_time(st: float) -> None:
     global _start_time
     _start_time = st
+
+
+def _exec_pipeline(pipe: Any) -> None:
+    """
+    Safely execute a pipeline across upstash-redis, redis-py, or mock clients.
+    upstash-redis Pipeline uses .exec(), while redis-py uses .execute().
+    """
+    if hasattr(pipe, "exec") and callable(pipe.exec):
+        pipe.exec()
+    elif hasattr(pipe, "execute") and callable(pipe.execute):
+        pipe.execute()
+
+
+def flush_pending_metrics() -> None:
+    """Flush buffered metrics counter increments to Redis in an atomic batch."""
+    global _last_flush_time
+    if not redis_client:
+        return
+
+    with _pending_lock:
+        if not _pending_increments:
+            return
+        to_flush = dict(_pending_increments)
+        _pending_increments.clear()
+        _last_flush_time = time.time()
+
+    try:
+        pipe = redis_client.pipeline() if hasattr(redis_client, "pipeline") else None
+        if pipe:
+            for k, amount in to_flush.items():
+                if amount > 0:
+                    pipe.hincrby(REDIS_METRICS_HASH, k, amount)
+            _exec_pipeline(pipe)
+        else:
+            for k, amount in to_flush.items():
+                if amount > 0:
+                    redis_client.hincrby(REDIS_METRICS_HASH, k, amount)
+    except Exception as exc:
+        logger.debug("Failed to flush pending metrics to Redis: %s", exc)
+        # Restore unflushed increments so counts are never dropped
+        with _pending_lock:
+            for k, amount in to_flush.items():
+                _pending_increments[k] += amount
 
 
 def record_request(path: str, method: str, status_code: int, duration_ms: float) -> None:
@@ -63,24 +112,23 @@ def record_request(path: str, method: str, status_code: int, duration_ms: float)
     _local_counters[f"route:{route_key}"] += 1
     _local_counters[f"status:{status_group}"] += 1
 
-    # Increment Redis counters if available
+    # Keep track of local high-water marks for instant monotonicity
+    _max_seen_counters["total"] = max(_max_seen_counters["total"], _local_counters["total"])
+    _max_seen_counters[f"route:{route_key}"] = max(_max_seen_counters[f"route:{route_key}"], _local_counters[f"route:{route_key}"])
+    _max_seen_counters[f"status:{status_group}"] = max(_max_seen_counters[f"status:{status_group}"], _local_counters[f"status:{status_group}"])
+
+    # Buffer increments for batched Redis sync
     if redis_client:
-        try:
-            pipe = redis_client.pipeline() if hasattr(redis_client, "pipeline") else None
-            keys = [
-                "total",
-                f"route:{route_key}",
-                f"status:{status_group}",
-            ]
-            if pipe:
-                for k in keys:
-                    pipe.hincrby(REDIS_METRICS_HASH, k, 1)
-                pipe.execute()
-            else:
-                for k in keys:
-                    redis_client.hincrby(REDIS_METRICS_HASH, k, 1)
-        except Exception:
-            pass
+        should_flush = False
+        with _pending_lock:
+            _pending_increments["total"] += 1
+            _pending_increments[f"route:{route_key}"] += 1
+            _pending_increments[f"status:{status_group}"] += 1
+            if _pending_increments["total"] >= 5 or (time.time() - _last_flush_time) >= 2.0:
+                should_flush = True
+
+        if should_flush:
+            flush_pending_metrics()
 
 
 def record_event(
@@ -132,18 +180,35 @@ def get_analytics_summary() -> dict[str, Any]:
     now = time.time()
     uptime = int(now - _start_time)
 
-    # 1. Traffic Counters
+    # 1. Flush any pending local increments first so Redis has all latest counts
+    flush_pending_metrics()
+
+    # 2. Build cumulative traffic counters using Redis with high-water mark protection
     traffic_counters = dict(_local_counters)
+
+    # Seed with process-level high water marks
+    for k, v in _max_seen_counters.items():
+        traffic_counters[k] = max(traffic_counters.get(k, 0), v)
+
     if redis_client:
         try:
             raw_hash = redis_client.hgetall(REDIS_METRICS_HASH)
             if raw_hash:
                 for k, v in raw_hash.items():
                     k_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
-                    v_int = int(v)
-                    traffic_counters[k_str] = max(traffic_counters.get(k_str, 0), v_int)
-        except Exception:
-            pass
+                    try:
+                        v_int = int(v)
+                        traffic_counters[k_str] = max(traffic_counters.get(k_str, 0), v_int)
+                        _max_seen_counters[k_str] = max(_max_seen_counters.get(k_str, 0), v_int)
+                    except (ValueError, TypeError):
+                        pass
+        except Exception as exc:
+            logger.debug("Failed to read metrics hash from Redis: %s", exc)
+
+    # Monotonic high-water mark lock: Ensure counters never drop under any worker race
+    for k, v in traffic_counters.items():
+        _max_seen_counters[k] = max(_max_seen_counters.get(k, 0), v)
+        traffic_counters[k] = _max_seen_counters[k]
 
     total_reqs = traffic_counters.get("total", 0)
     routes_split = {
