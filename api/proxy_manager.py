@@ -410,12 +410,12 @@ class ProxyPoolManager:
         if client is None or client.is_closed or (current_loop is not None and loop != current_loop):
             # Deferred import from downloader to prevent circular startup import
             from downloader import HEADERS, COOKIES_DICT
-            limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
+            limits = httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=60.0)
             client = httpx.AsyncClient(
                 headers=HEADERS,
                 cookies=COOKIES_DICT,
                 limits=limits,
-                timeout=httpx.Timeout(30.0),
+                timeout=httpx.Timeout(connect=25.0, read=30.0, write=20.0, pool=10.0),
                 proxy=proxy_url,
                 http2=False,  # HTTP/1.1 is more robust with authenticated proxies
             )
@@ -500,16 +500,36 @@ class ProxyPoolManager:
         reason: str,
         cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
     ) -> None:
-        """Quarantine a proxy for cooldown_seconds after a failure or rate-limit."""
+        """Quarantine a proxy after a failure or rate-limit with smart transient handling."""
         if not proxy_url:
             return
         entry = self.get_entry_by_url(proxy_url)
         if entry:
             entry.failure_count += 1
             entry.consecutive_failures += 1
+            entry.last_error = reason
+
+            reason_lower = reason.lower()
+            is_hard_waf_or_auth = any(
+                w in reason_lower
+                for w in ("400141", "400810", "402", "407", "waf", "captcha", "forbidden", "unauthorized")
+            )
+
+            # For transient network timeouts, allow 1 retry before hard-quarantining
+            if not is_hard_waf_or_auth and entry.consecutive_failures < 2:
+                # Soft cooldown: brief 15s pause so next immediate request picks another proxy
+                entry.cooldown_until = time.time() + min(15.0, cooldown_seconds)
+                logger.info(
+                    "Proxy %s transient hiccup (1/2). Soft backoff 15s: %s",
+                    mask_proxy(proxy_url),
+                    reason,
+                )
+                self.save_to_redis()
+                return
+
+            # Hard quarantine
             entry.status = "cooldown"
             entry.cooldown_until = time.time() + cooldown_seconds
-            entry.last_error = reason
             logger.warning(
                 "Quarantining proxy %s for %ds. Reason: %s",
                 mask_proxy(proxy_url),

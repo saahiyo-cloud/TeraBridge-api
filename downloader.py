@@ -104,12 +104,22 @@ def update_credentials(cookie=None, js_token=None, bds_token=None, logid=None):
             proxy_manager.sync_cookies(COOKIES_DICT)
         except Exception:
             pass
+        invalidate_token_cache()
     if js_token:
         JSTOKEN = js_token
     if bds_token:
         BDSTOKEN = bds_token
+        global _LAST_TOKEN_REFRESH
+        _LAST_TOKEN_REFRESH = time.time()
     if logid:
         LOGID = logid
+
+def invalidate_token_cache():
+    """Clear cached BDS/JS tokens so next resolve fetches fresh credentials."""
+    global BDSTOKEN, JSTOKEN, _LAST_TOKEN_REFRESH
+    BDSTOKEN = ""
+    JSTOKEN = ""
+    _LAST_TOKEN_REFRESH = 0.0
 
 async def validate_session_cookie(cookie_str):
     """Verify if a TeraBox cookie is valid by making a test request and checking for a bdstoken."""
@@ -228,49 +238,68 @@ def _new_logid():
     return hashlib.md5(seed.encode()).hexdigest().upper()
 
 
-async def refresh_account_tokens():
-    """Refresh account tokens from the authenticated main page.
+_LAST_TOKEN_REFRESH = 0.0
+_TOKEN_REFRESH_TTL = 900.0  # 15 minutes cache
+_token_refresh_lock = asyncio.Lock()
 
-    Returns a (bdstoken, jstoken, logid) tuple so callers can use them as
-    local variables instead of relying on shared globals. This eliminates the
-    need to serialize concurrent requests through a global lock.
+async def refresh_account_tokens(force: bool = False):
+    """Refresh account tokens from the authenticated main page with local TTL caching.
+
+    Returns a (bdstoken, jstoken, logid) tuple. Uses cached tokens if valid (< 15 min),
+    preventing repetitive requests to /main on every resolve.
     """
-    global JSTOKEN, BDSTOKEN, LOGID
+    global JSTOKEN, BDSTOKEN, LOGID, _LAST_TOKEN_REFRESH
 
-    browser_headers = {
-        **HEADERS,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Referer": f"{BASE_API}/",
-    }
-    try:
-        response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, follow_redirects=True, timeout=20.0)
-        response.raise_for_status()
-    except Exception as exc:
-        err_msg = str(exc) or type(exc).__name__
-        raise httpx.TransportError(f"Network transport error reaching TeraBox: {err_msg}") from exc
-    html = response.text
+    now = time.time()
+    if not force and BDSTOKEN and (now - _LAST_TOKEN_REFRESH < _TOKEN_REFRESH_TTL):
+        return BDSTOKEN, JSTOKEN, _new_logid()
 
-    bds_match = re.search(r'["\']bdstoken["\']?\s*[:=]\s*["\']([^"\']+)', html, re.IGNORECASE)
-    if not bds_match:
-        raise RuntimeError("TeraBox did not return bdstoken; the account cookie may be expired")
-    bdstoken = bds_match.group(1)
+    async with _token_refresh_lock:
+        now = time.time()
+        if not force and BDSTOKEN and (now - _LAST_TOKEN_REFRESH < _TOKEN_REFRESH_TTL):
+            return BDSTOKEN, JSTOKEN, _new_logid()
 
-    jstoken = JSTOKEN  # keep existing if not found
-    js_match = re.search(r'jsToken\s*=\s*["\']([^"\']+)', html, re.IGNORECASE)
-    if js_match:
-        decoded = urllib.parse.unquote(urllib.parse.unquote(js_match.group(1)))
-        token_match = re.search(r'fn\(["\']([A-Fa-f0-9]{32,})["\']\)', decoded)
-        jstoken = token_match.group(1) if token_match else decoded
+        # Clean browser headers for /main (avoid sending XMLHttpRequest/Accept:json to HTML page)
+        browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": f"{BASE_API}/",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+        }
+        try:
+            response = await get_session().get(f"{BASE_API}/main", headers=browser_headers, follow_redirects=True, timeout=25.0)
+            response.raise_for_status()
+        except Exception as exc:
+            err_msg = str(exc) or type(exc).__name__
+            raise httpx.TransportError(f"Network transport error reaching TeraBox: {err_msg}") from exc
+        html = response.text
 
-    logid = _new_logid()
+        bds_match = re.search(r'["\']bdstoken["\']?\s*[:=]\s*["\']([^"\']+)', html, re.IGNORECASE)
+        if not bds_match:
+            raise RuntimeError("TeraBox did not return bdstoken; the account cookie may be expired")
+        bdstoken = bds_match.group(1)
 
-    # Also update globals so other callers (e.g. qp()) stay in sync
-    BDSTOKEN = bdstoken
-    JSTOKEN = jstoken
-    LOGID = logid
+        jstoken = JSTOKEN  # keep existing if not found
+        js_match = re.search(r'jsToken\s*=\s*["\']([^"\']+)', html, re.IGNORECASE)
+        if js_match:
+            decoded = urllib.parse.unquote(urllib.parse.unquote(js_match.group(1)))
+            token_match = re.search(r'fn\(["\']([A-Fa-f0-9]{32,})["\']\)', decoded)
+            jstoken = token_match.group(1) if token_match else decoded
 
-    return bdstoken, jstoken, logid
+        logid = _new_logid()
+
+        # Update globals and refresh timestamp
+        BDSTOKEN = bdstoken
+        JSTOKEN = jstoken
+        LOGID = logid
+        _LAST_TOKEN_REFRESH = time.time()
+
+        return bdstoken, jstoken, logid
 
 
 async def resolve_share_session(surl, link):
@@ -769,21 +798,30 @@ async def resolve_link(link, action="d", wait_for_transcoding=False, quality=Non
             if errno == 0:
                 if pctx.proxy_url:
                     proxy_manager.mark_success(pctx.proxy_url)
-            elif errno in (400141, 400810) or errno == -2:
+            elif errno in (400141, 400810):
                 if pctx.proxy_url:
                     proxy_manager.mark_failure(
                         pctx.proxy_url,
-                        reason=f"Proxy failure (errno {errno}: {res.get('error', '')})",
+                        reason=f"TeraBox WAF flagged proxy (errno {errno}: {res.get('error', '')})",
                         cooldown_seconds=300.0,
+                    )
+            elif errno == -2:
+                # Transient network timeout or transport glitch
+                if pctx.proxy_url:
+                    proxy_manager.mark_failure(
+                        pctx.proxy_url,
+                        reason=f"Network transport timeout (errno {errno}: {res.get('error', '')})",
+                        cooldown_seconds=45.0,
                     )
             return res
         except Exception as exc:
             err_str = str(exc)
             if pctx.proxy_url and any(w in err_str.lower() for w in ("proxy", "402", "407", "connecttimeout", "proxyerror", "connection refused")):
+                is_hard_err = any(w in err_str.lower() for w in ("402", "407", "proxyerror", "connection refused"))
                 proxy_manager.mark_failure(
                     pctx.proxy_url,
                     reason=f"Proxy network error: {err_str}",
-                    cooldown_seconds=300.0,
+                    cooldown_seconds=300.0 if is_hard_err else 45.0,
                 )
             raise
 

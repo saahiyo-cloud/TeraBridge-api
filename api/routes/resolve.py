@@ -194,6 +194,11 @@ async def resolve_link_with_retry(
                 record_event("account_unhealthy", f"Account '{active_id}' marked unhealthy: {reason}", level="error")
             except Exception:
                 pass
+            try:
+                import downloader as dl
+                dl.invalidate_token_cache()
+            except Exception:
+                pass
             _load_config_from_redis()
             if attempt < max_retries - 1:
                 logger.info("Retrying with rotated account: %s", _current_active_account_id)
