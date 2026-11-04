@@ -353,11 +353,22 @@ def _rewrite_m3u8(request: Request, m3u8_text: str) -> Response:
     from api.config import REDIRECT_SEGMENTS
     base_url = request_base_url(request)
     rewritten = []
+    has_discontinuity = False
     for line in m3u8_text.splitlines():
         line = line.strip()
         if not line:
             continue
-        if line.startswith("http://") or line.startswith("https://"):
+        if line.startswith("#EXT-X-DISCONTINUITY"):
+            has_discontinuity = True
+            rewritten.append(line)
+        elif line.startswith("#EXTINF:"):
+            # Ensure each standalone chunk is marked as discontinuous so HLS players reset timeline
+            if not has_discontinuity:
+                rewritten.append("#EXT-X-DISCONTINUITY")
+            has_discontinuity = False
+            rewritten.append(line)
+        elif line.startswith("http://") or line.startswith("https://"):
+            has_discontinuity = False
             if REDIRECT_SEGMENTS:
                 # Direct CDN streaming: Zero server hops, zero 307 redirect latency.
                 # Video chunks are downloaded directly at full line speed from the CDN edge.
