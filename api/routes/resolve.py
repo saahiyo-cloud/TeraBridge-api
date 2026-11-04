@@ -527,7 +527,7 @@ async def resolve(request: Request):
     )
 
     act_lower = action.lower()
-    if act_lower in ("s", "stream", "streaming"):
+    if act_lower in ("s", "stream", "streaming", "both"):
         action = "s"
     elif act_lower in ("l", "list", "info", "metadata"):
         action = "l"
