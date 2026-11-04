@@ -91,6 +91,12 @@ _LOOPBACK_CIDRS = (
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
 )
+_PRIVATE_PROXY_CIDRS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+)
 
 
 def _peer_ip(request: Request):
@@ -110,7 +116,7 @@ def _is_trusted_peer(request: Request, peer=None) -> bool:
         peer = _peer_ip(request)
     if peer is None:
         return False
-    if any(peer in cidr for cidr in _LOOPBACK_CIDRS):
+    if any(peer in cidr for cidr in _LOOPBACK_CIDRS) or any(peer in cidr for cidr in _PRIVATE_PROXY_CIDRS):
         return True
     if TRUSTED_PROXY_CIDRS and any(peer in cidr for cidr in TRUSTED_PROXY_CIDRS):
         return True
@@ -168,10 +174,19 @@ def request_base_url(request: Request) -> str:
     scheme = request.url.scheme
     if ON_RENDER or ON_VERCEL:
         scheme = "https"
-    elif _is_trusted_peer(request):
+    else:
         forwarded_proto = request.headers.get("X-Forwarded-Proto")
+        cf_visitor = request.headers.get("CF-Visitor")
         if forwarded_proto:
             scheme = forwarded_proto.split(",")[0].strip()
+        elif cf_visitor and '"scheme":"https"' in cf_visitor:
+            scheme = "https"
+        elif request.headers.get("X-Forwarded-Ssl") == "on":
+            scheme = "https"
+        elif _is_trusted_peer(request):
+            netloc = request.url.netloc.lower()
+            if not (netloc.startswith("localhost") or netloc.startswith("127.0.0.1")):
+                scheme = "https"
     return f"{scheme}://{request.url.netloc}"
 
 

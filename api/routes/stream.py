@@ -170,7 +170,7 @@ async def stream_manifest(request: Request):
             )
 
         res = await resolve_link_with_retry(
-            link, action="s", wait_for_transcoding=wait_for_transcoding
+            link, action="s", wait_for_transcoding=wait_for_transcoding, quality=qtype
         )
         if res.get("errno") != 0:
             return JSONResponse(
@@ -182,6 +182,9 @@ async def stream_manifest(request: Request):
         matching_file = _pick_file(files, fs_id, file_index)
         if not matching_file:
             return JSONResponse({"status": "error", "message": "File not found."}, status_code=404)
+
+        if matching_file.get("stream_m3u8"):
+            return _rewrite_m3u8(request, matching_file["stream_m3u8"])
 
         return await _fetch_quality_playlist(request, matching_file, quality, qtype)
 
@@ -328,7 +331,40 @@ def _build_master_playlist(request: Request, surl: str, ready_qualities: dict) -
             )
             playlist.append(f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={res_str}")
             playlist.append(stream_url)
-    return Response(content="\n".join(playlist), media_type="application/x-mpegURL")
+    return Response(
+        content="\n".join(playlist),
+        media_type="application/x-mpegURL",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+        },
+    )
+
+
+def _rewrite_m3u8(request: Request, m3u8_text: str) -> Response:
+    base_url = request_base_url(request)
+    rewritten = []
+    for line in m3u8_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("http://") or line.startswith("https://"):
+            signed = make_signed_params(request, line, "", "", kind="segment")
+            proxy_seg = f"{base_url}/api/stream/segment.ts?url={urllib.parse.quote(line, safe='')}&{signed}"
+            rewritten.append(proxy_seg)
+        else:
+            rewritten.append(line)
+
+    return Response(
+        content="\n".join(rewritten),
+        media_type="application/x-mpegURL",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+        },
+    )
 
 
 async def _fetch_quality_playlist(
@@ -338,6 +374,7 @@ async def _fetch_quality_playlist(
     qtype: str,
 ) -> Response:
     import downloader as dl
+    from api.proxy_manager import proxy_manager
 
     filename = matching_file.get("filename", "")
     my_file_path = dl.ROOT_PATH.rstrip("/") + "/" + filename
@@ -347,24 +384,14 @@ async def _fetch_quality_playlist(
         f"{dl.BASE_API}/api/streaming?{dl.qp()}&path={encoded_path}&type={qtype}"
         f"&bdstoken={dl.BDSTOKEN}&isplayer=1&check_blue=1&clienttype=1&resolution={quality}"
     )
-    sr = await dl.get_session().get(url, timeout=20.0)
+    async with proxy_manager.acquire_context() as pctx:
+        client = pctx.client if pctx and pctx.client else dl.get_session()
+        sr = await client.get(url, timeout=20.0)
+
     if sr.status_code != 200 or "#EXTM3U" not in sr.text:
         return JSONResponse(
             {"status": "error", "message": f"Failed to retrieve stream (status={sr.status_code})"},
             status_code=500,
         )
 
-    base_url = request_base_url(request)
-    rewritten = []
-    for line in sr.text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("http://") or line.startswith("https://"):
-            signed = make_signed_params(request, line, "", "", kind="segment")
-            proxy_seg = f"{base_url}/api/stream/segment.ts?url={urllib.parse.quote(line)}&{signed}"
-            rewritten.append(proxy_seg)
-        else:
-            rewritten.append(line)
-
-    return Response(content="\n".join(rewritten), media_type="application/x-mpegURL")
+    return _rewrite_m3u8(request, sr.text)
