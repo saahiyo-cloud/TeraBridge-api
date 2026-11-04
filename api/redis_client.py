@@ -1,9 +1,15 @@
 import os
 import logging
+
 try:
-    from upstash_redis import Redis
+    from upstash_redis import Redis as SyncRedis
 except ImportError:
-    Redis = None
+    SyncRedis = None
+
+try:
+    from upstash_redis.asyncio import Redis as AsyncRedis
+except ImportError:
+    AsyncRedis = None
 
 logger = logging.getLogger("terabridge.redis")
 
@@ -18,16 +24,31 @@ UPSTASH_REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
 UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
 redis_client = None
+async_redis_client = None
 
-if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN and Redis is not None:
-    try:
-        redis_client = Redis(url=UPSTASH_REDIS_REST_URL, token=UPSTASH_REDIS_REST_TOKEN)
-        redis_client.ping()
-        logger.info("Successfully connected to Upstash Redis.")
-    except Exception as e:
-        logger.error("Failed to initialize Upstash Redis: %s", e)
-        redis_client = None
-elif not Redis and (UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN):
-    logger.warning("Upstash Redis credentials present, but 'upstash-redis' package is not installed. Falling back to local in-memory.")
+if UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN:
+    if SyncRedis is not None:
+        try:
+            redis_client = SyncRedis(url=UPSTASH_REDIS_REST_URL, token=UPSTASH_REDIS_REST_TOKEN)
+            logger.info("Initialized sync Upstash Redis client.")
+        except Exception as e:
+            logger.error("Failed to initialize sync Upstash Redis: %s", e)
+            redis_client = None
+
+    if AsyncRedis is not None:
+        try:
+            async_redis_client = AsyncRedis(url=UPSTASH_REDIS_REST_URL, token=UPSTASH_REDIS_REST_TOKEN)
+            logger.info("Initialized async Upstash Redis client.")
+        except Exception as e:
+            logger.error("Failed to initialize async Upstash Redis: %s", e)
+            async_redis_client = None
+    elif not AsyncRedis:
+        logger.warning("AsyncRedis not available; falling back to sync or local in-memory.")
 else:
     logger.info("Upstash Redis credentials not detected. Caching and Rate Limiting will use local in-memory.")
+
+
+def get_async_redis():
+    """Return the active async Redis client, or None."""
+    global async_redis_client
+    return async_redis_client

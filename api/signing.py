@@ -92,13 +92,21 @@ def verify_signature(
             return False
         return hmac.compare_digest(expected, signature)
 
-    # Legacy: unsigned / no-expiry URLs
+    # Legacy: unsigned / no-expiry URLs (deprecated for production security)
+    from api.config import ALLOW_LEGACY_SIGNATURES
+    if not ALLOW_LEGACY_SIGNATURES:
+        logger.warning(
+            "Rejected legacy un-expiring signed URL (p1=%s...). URLs must carry an 'exp' timestamp.",
+            param1[:24] if param1 else "empty",
+        )
+        return False
+
     expected_legacy = generate_signature(param1, param2, param3, "")
     if expected_legacy and hmac.compare_digest(expected_legacy, signature):
         logger.warning(
             "Accepted legacy un-expiring signed URL (p1=%s...). "
-            "Consider re-resolving to refresh.",
-            param1[:24],
+            "Consider re-resolving to refresh with an expiration timestamp.",
+            param1[:24] if param1 else "empty",
         )
         return True
 

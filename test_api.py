@@ -10,7 +10,7 @@ load_dotenv()
 TEST_BASE_URL = os.environ.get("TEST_BASE_URL", "").rstrip("/")
 API_KEY = os.environ.get("API_KEY", "supercloudkey")
 CRON_SECRET = os.environ.get("CRON_SECRET", "supercronsecret")
-TEST_LINK = os.environ.get("TEST_LINK", "https://terasharefile.com/s/1Xd-gXSePXGWNThkFYrC86A")
+TEST_LINK = os.environ.get("TEST_LINK", "https://terabox.com/s/1sample-video-test-doc")
 
 # Import app for in-process testing if not testing a live remote server
 if not TEST_BASE_URL:
@@ -37,9 +37,14 @@ class TestTeraBridgeAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not TEST_BASE_URL:
-            # Prevent local unit test suites from overwriting production Redis proxy pool
+            # Prevent local unit test suites from overwriting production Redis proxy pool and event logs
             from api.proxy_manager import proxy_manager
             proxy_manager._persist_to_redis = False
+            try:
+                from api import metrics
+                metrics.redis_client = None
+            except Exception:
+                pass
             cls.client = TestClient(app)
             print(f"🔧 Testing local FastAPI application in-process via TestClient...")
         else:
@@ -457,6 +462,95 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(resp_stats.status_code, 200)
         stats_data = resp_stats.json()
         self.assertIn("traffic", stats_data)
+
+    # 43. GET /healthz and /api/health - Liveness & Readiness Probes
+    def test_43_healthz_probes(self):
+        resp1 = self.make_request("GET", "/healthz")
+        self.assertEqual(resp1.status_code, 200)
+        d1 = resp1.json()
+        self.assertEqual(d1.get("status"), "healthy")
+        self.assertEqual(d1.get("service"), "terabridge-api")
+        self.assertIn("proxies", d1)
+        self.assertIn("redis", d1)
+
+        resp2 = self.make_request("GET", "/api/health")
+        self.assertEqual(resp2.status_code, 200)
+        d2 = resp2.json()
+        self.assertEqual(d2.get("status"), "healthy")
+
+    # 44. Strict HMAC Verification - Reject Legacy Un-expiring Signatures
+    def test_44_legacy_unexpiring_signatures_rejected(self):
+        from api.signing import verify_signature, generate_signature
+        # Legacy signature with empty exp
+        legacy_sig = generate_signature("surl_test", "12345", "", "")
+        # Must be rejected when ALLOW_LEGACY_SIGNATURES is false (default)
+        self.assertFalse(verify_signature("surl_test", "12345", "", legacy_sig, exp=""))
+
+    # 45. Stream Route Helpers - Negative Bounds Protection
+    def test_45_pick_file_negative_bounds(self):
+        from api.routes.stream import _pick_file
+        files = [{"fs_id": "1", "filename": "video.mp4"}]
+        # Positive in-bounds
+        self.assertIsNotNone(_pick_file(files, "", 0))
+        # Negative index must not access backwards from list
+        self.assertIsNone(_pick_file(files, "", -1))
+        # Out-of-bounds positive
+        self.assertIsNone(_pick_file(files, "", 5))
+
+    # 46. Range Header Parsing RFC Compliance
+    def test_46_range_header_parsing_rfc_compliance(self):
+        from api.routes.download import parse_byte_range
+        total_size = 1000
+
+        # Normal ranges
+        res = parse_byte_range("bytes=0-499", total_size)
+        self.assertEqual(res, (0, 499, 206))
+
+        res = parse_byte_range("bytes=500-", total_size)
+        self.assertEqual(res, (500, 999, 206))
+
+        # Suffix range (RFC 9110: last 200 bytes)
+        res = parse_byte_range("bytes=-200", total_size)
+        self.assertEqual(res, (800, 999, 206))
+
+        # Clamping end to file_size - 1
+        res = parse_byte_range("bytes=0-50000", total_size)
+        self.assertEqual(res, (0, 999, 206))
+
+        # Unsatisfiable ranges -> return None (HTTP 416)
+        res_oob = parse_byte_range("bytes=1500-", total_size)
+        self.assertIsNone(res_oob)
+
+        res_inv = parse_byte_range("bytes=500-200", total_size)
+        self.assertIsNone(res_inv)
+
+        res_zero_sfx = parse_byte_range("bytes=-0", total_size)
+        self.assertIsNone(res_zero_sfx)
+
+    # 47. Cloudvids Storage Janitor Endpoint
+    def test_47_cloudvids_cleanup_endpoint(self):
+        # Auth check
+        resp_unauth = self.make_request("POST", "/api/admin/cloudvids/cleanup")
+        self.assertEqual(resp_unauth.status_code, 401)
+
+        # Authorized check
+        headers = {"X-API-Key": API_KEY}
+        resp_auth = self.make_request("POST", "/api/admin/cloudvids/cleanup", headers=headers, json={"max_age_hours": 48})
+        self.assertIn(resp_auth.status_code, (200, 400))
+        data = resp_auth.json()
+        self.assertIn("status", data)
+
+    # 48. Safe JSON Loads Resilience
+    def test_48_safe_json_loads_resilience(self):
+        from api.account_pool import safe_json_loads
+        # Trailing comma fix
+        parsed = safe_json_loads('{"key": "value",}')
+        self.assertEqual(parsed.get("key"), "value")
+
+        # Malformed raw text returns empty dict without throwing
+        self.assertEqual(safe_json_loads("not json at all"), {})
+        self.assertEqual(safe_json_loads(None), {})
+        self.assertEqual(safe_json_loads(b"bad bytes"), {})
 
 
 if __name__ == "__main__":

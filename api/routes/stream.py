@@ -45,6 +45,17 @@ def set_proxy_client(client: httpx.AsyncClient):
     _proxy_client = client
 
 
+def _get_active_client() -> httpx.AsyncClient:
+    global _proxy_client
+    if _proxy_client is None or _proxy_client.is_closed:
+        try:
+            from api.index import get_proxy_client
+            _proxy_client = get_proxy_client()
+        except Exception:
+            _proxy_client = httpx.AsyncClient(follow_redirects=True, timeout=120.0)
+    return _proxy_client
+
+
 # ─── /api/stream/manifest ────────────────────────────────────────────
 
 @router.api_route("/api/stream/manifest", methods=["GET", "OPTIONS"])
@@ -73,7 +84,7 @@ async def stream_manifest(request: Request):
         )
 
     ip = client_ip(request)
-    if not rate_limiter.is_allowed(ip):
+    if not await rate_limiter.is_allowed_async(ip):
         return JSONResponse(
             {"status": "error", "message": "Rate limit exceeded. Try again shortly."},
             status_code=429,
@@ -175,8 +186,9 @@ async def stream_manifest(request: Request):
         return await _fetch_quality_playlist(request, matching_file, quality, qtype)
 
     except Exception as exc:
+        logger.exception("Manifest proxy error for link=%s: %s", link, exc)
         return JSONResponse(
-            {"status": "error", "message": f"Manifest proxy error: {exc}"},
+            {"status": "error", "message": "Manifest proxy streaming error."},
             status_code=500,
         )
 
@@ -211,7 +223,7 @@ async def stream_segment(request: Request):
     if REDIRECT_SEGMENTS:
         return RedirectResponse(url=url, status_code=307)
 
-    client = _proxy_client
+    client = _get_active_client()
     try:
         headers: dict = {"User-Agent": UA, "Referer": "https://dm.1024terabox.com/"}
         range_header = request.headers.get("Range")
@@ -242,8 +254,9 @@ async def stream_segment(request: Request):
         return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
 
     except Exception as exc:
+        logger.exception("Segment proxy error: %s", exc)
         return JSONResponse(
-            {"status": "error", "message": f"Segment proxy error: {exc}"},
+            {"status": "error", "message": "Segment proxy streaming error."},
             status_code=500,
         )
 
@@ -255,7 +268,7 @@ def _pick_file(files: list, fs_id: str, file_index: int) -> dict | None:
         for f in files:
             if str(f.get("original_fs_id")) == str(fs_id) or str(f.get("fs_id")) == str(fs_id):
                 return f
-    if files and file_index < len(files):
+    if files and 0 <= file_index < len(files):
         return files[file_index]
     return None
 

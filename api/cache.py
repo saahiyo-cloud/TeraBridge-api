@@ -26,6 +26,28 @@ from api.redis_client import redis_client
 logger = logging.getLogger("terabridge.cache")
 
 
+def _scan_keys(redis_instance, pattern: str, limit: int = 500) -> list[str]:
+    """Helper to safely scan keys without blocking Redis via KEYS command."""
+    if not redis_instance:
+        return []
+    try:
+        if hasattr(redis_instance, "scan"):
+            cursor = 0
+            matched = []
+            for _ in range(10):
+                cursor, batch = redis_instance.scan(cursor, match=pattern, count=100)
+                matched.extend(batch)
+                if cursor == 0 or len(matched) >= limit or str(cursor) == "0":
+                    break
+            return matched[:limit]
+        return redis_instance.keys(pattern) or []
+    except Exception:
+        try:
+            return redis_instance.keys(pattern) or []
+        except Exception:
+            return []
+
+
 class ResponseCache:
     """
     Multi-tier cache supporting response links, thumbnail media, and dashboard data.
@@ -66,19 +88,7 @@ class ResponseCache:
     def get(self, link: str, action: str, wait: bool):
         key = self.make_key(link, action, wait)
 
-        if self._redis:
-            try:
-                data_str = self._redis.get(f"cache:response:{key}")
-                if data_str:
-                    self.hits += 1
-                    self._incr_stat("stats:cache_hits")
-                    return json.loads(data_str)
-                self.misses += 1
-                self._incr_stat("stats:cache_misses")
-                return None
-            except Exception as exc:
-                logger.warning("Redis cache get error: %s", exc)
-
+        # 1. L1 In-Memory LRU hit (fastest, zero network / thread blocking)
         if key in self._store:
             data, ts = self._store[key]
             if time.time() - ts < self._ttl:
@@ -87,22 +97,45 @@ class ResponseCache:
                 return data
             del self._store[key]
 
+        # 2. L2 Distributed Redis
+        if self._redis:
+            try:
+                data_str = self._redis.get(f"cache:response:{key}")
+                if data_str:
+                    self.hits += 1
+                    self._incr_stat("stats:cache_hits")
+                    val = json.loads(data_str)
+                    # Warm L1 cache
+                    self._store[key] = (val, time.time())
+                    if len(self._store) > self._max:
+                        self._store.popitem(last=False)
+                    return val
+                self.misses += 1
+                self._incr_stat("stats:cache_misses")
+                return None
+            except Exception as exc:
+                logger.warning("Redis cache get error: %s", exc)
+
         self.misses += 1
         return None
 
     def put(self, link: str, action: str, wait: bool, response):
         key = self.make_key(link, action, wait)
 
+        # 1. Update L1 In-Memory
+        if key in self._store:
+            del self._store[key]
+        self._store[key] = (response, time.time())
+        if len(self._store) > self._max:
+            self._store.popitem(last=False)
+
+        # 2. Update L2 Redis
         if self._redis:
             try:
                 self._redis.set(f"cache:response:{key}", json.dumps(response), ex=self._ttl)
                 return
             except Exception as exc:
                 logger.warning("Redis cache put error: %s", exc)
-
-        if key in self._store:
-            del self._store[key]
-        self._store[key] = (response, time.time())
         while len(self._store) > self._max:
             self._store.popitem(last=False)
 
@@ -120,21 +153,7 @@ class ResponseCache:
         """Returns (image_bytes, content_type) or None if cached item not found."""
         thumb_hash = hashlib.md5(lookup_key.encode("utf-8")).hexdigest()
 
-        if self._redis:
-            try:
-                raw_json = self._redis.get(f"cache:thumb:{thumb_hash}")
-                if raw_json:
-                    payload = json.loads(raw_json)
-                    data = base64.b64decode(payload["b64"])
-                    self.thumb_hits += 1
-                    self._incr_stat("stats:thumb_hits")
-                    return data, payload.get("ct", "image/jpeg")
-                self.thumb_misses += 1
-                self._incr_stat("stats:thumb_misses")
-                return None
-            except Exception as exc:
-                logger.debug("Redis thumbnail get error: %s", exc)
-
+        # 1. L1 in-memory check
         if thumb_hash in self._thumb_store:
             data, ct, ts, ttl = self._thumb_store[thumb_hash]
             if time.time() - ts < ttl:
@@ -143,13 +162,46 @@ class ResponseCache:
                 return data, ct
             del self._thumb_store[thumb_hash]
 
+        # 2. L2 Redis check
+        if self._redis:
+            try:
+                raw_json = self._redis.get(f"cache:thumb:{thumb_hash}")
+                if raw_json:
+                    payload = json.loads(raw_json)
+                    data = base64.b64decode(payload["b64"])
+                    self.thumb_hits += 1
+                    self._incr_stat("stats:thumb_hits")
+                    ct = payload.get("ct", "image/jpeg")
+                    # Warm L1 cache
+                    self._thumb_store[thumb_hash] = (data, ct, time.time(), CACHE_THUMBNAIL_TTL)
+                    if len(self._thumb_store) > 500:
+                        self._thumb_store.popitem(last=False)
+                    return data, ct
+                self.thumb_misses += 1
+                self._incr_stat("stats:thumb_misses")
+                return None
+            except Exception as exc:
+                logger.debug("Redis thumbnail get error: %s", exc)
+
         self.thumb_misses += 1
         return None
 
     def put_thumbnail(self, lookup_key: str, data: bytes, content_type: str = "image/jpeg", ttl_seconds: int = CACHE_THUMBNAIL_TTL):
-        """Caches thumbnail bytes in Redis / memory."""
+        """Caches thumbnail bytes in Redis / memory with size protection."""
+        # Reject unbounded memory exhaustion from excessively large thumbnails (>5MB)
+        if len(data) > 5 * 1024 * 1024:
+            return
+
         thumb_hash = hashlib.md5(lookup_key.encode("utf-8")).hexdigest()
 
+        # 1. L1 memory store
+        if thumb_hash in self._thumb_store:
+            del self._thumb_store[thumb_hash]
+        self._thumb_store[thumb_hash] = (data, content_type, time.time(), ttl_seconds)
+        while len(self._thumb_store) > 500:
+            self._thumb_store.popitem(last=False)
+
+        # 2. L2 Redis store
         if self._redis:
             try:
                 payload = {
@@ -161,29 +213,10 @@ class ResponseCache:
             except Exception as exc:
                 logger.debug("Redis thumbnail put error: %s", exc)
 
-        if thumb_hash in self._thumb_store:
-            del self._thumb_store[thumb_hash]
-        self._thumb_store[thumb_hash] = (data, content_type, time.time(), ttl_seconds)
-        while len(self._thumb_store) > 500:
-            self._thumb_store.popitem(last=False)
-
     # ── Dashboard Data Cache (Quota & Cloudvids Lists) ─────────────────
     def get_dashboard(self, key: str) -> dict | None:
         """Retrieves cached dashboard metrics (quota, file list)."""
-        dash_key = f"cache:dash:{key}"
-        if self._redis:
-            try:
-                raw = self._redis.get(dash_key)
-                if raw:
-                    self.dash_hits += 1
-                    self._incr_stat("stats:dash_hits")
-                    return json.loads(raw)
-                self.dash_misses += 1
-                self._incr_stat("stats:dash_misses")
-                return None
-            except Exception as exc:
-                logger.debug("Redis dashboard get error: %s", exc)
-
+        # 1. L1 in-memory check
         if key in self._dash_store:
             data, ts, ttl = self._dash_store[key]
             if time.time() - ts < ttl:
@@ -192,11 +225,38 @@ class ResponseCache:
                 return data
             del self._dash_store[key]
 
+        # 2. L2 Redis check
+        dash_key = f"cache:dash:{key}"
+        if self._redis:
+            try:
+                raw = self._redis.get(dash_key)
+                if raw:
+                    self.dash_hits += 1
+                    self._incr_stat("stats:dash_hits")
+                    parsed = json.loads(raw)
+                    self._dash_store[key] = (parsed, time.time(), CACHE_DASHBOARD_TTL)
+                    if len(self._dash_store) > 100:
+                        self._dash_store.popitem(last=False)
+                    return parsed
+                self.dash_misses += 1
+                self._incr_stat("stats:dash_misses")
+                return None
+            except Exception as exc:
+                logger.debug("Redis dashboard get error: %s", exc)
+
         self.dash_misses += 1
         return None
 
     def put_dashboard(self, key: str, data: dict, ttl_seconds: int = CACHE_DASHBOARD_TTL):
         """Caches dashboard metrics for snappy UI interactions."""
+        # 1. L1 store
+        if key in self._dash_store:
+            del self._dash_store[key]
+        self._dash_store[key] = (data, time.time(), ttl_seconds)
+        while len(self._dash_store) > 100:
+            self._dash_store.popitem(last=False)
+
+        # 2. L2 Redis store
         dash_key = f"cache:dash:{key}"
         if self._redis:
             try:
@@ -205,18 +265,12 @@ class ResponseCache:
             except Exception as exc:
                 logger.debug("Redis dashboard put error: %s", exc)
 
-        if key in self._dash_store:
-            del self._dash_store[key]
-        self._dash_store[key] = (data, time.time(), ttl_seconds)
-        while len(self._dash_store) > 100:
-            self._dash_store.popitem(last=False)
-
     def invalidate_dashboard(self, account_id: str | None = None):
         """Purges cached dashboard quota & file listings for an account or all accounts."""
         if self._redis:
             try:
                 pattern = f"cache:dash:*{account_id}*" if account_id else "cache:dash:*"
-                keys = self._redis.keys(pattern) or []
+                keys = _scan_keys(self._redis, pattern)
                 if keys:
                     self._redis.delete(*keys)
             except Exception as exc:
@@ -248,8 +302,8 @@ class ResponseCache:
                 d_total  = d_hits + d_misses
 
                 try:
-                    entries_count = len(self._redis.keys("cache:response:*") or [])
-                    thumb_count   = len(self._redis.keys("cache:thumb:*") or [])
+                    entries_count = len(_scan_keys(self._redis, "cache:response:*"))
+                    thumb_count   = len(_scan_keys(self._redis, "cache:thumb:*"))
                 except Exception:
                     entries_count = "unknown"
                     thumb_count   = "unknown"

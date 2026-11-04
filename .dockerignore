@@ -15,7 +15,7 @@
 skills-lock.json
 
 # ─── Docker artifacts (don't recurse into the build context) ─────────
-Dockerfile
+# Dockerfile (needed by remote builders like InstaCloud / Render / Railway)
 .dockerignore
 docker-compose.yml
 docker-compose.*.yml

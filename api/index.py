@@ -17,7 +17,7 @@ import time
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -79,20 +79,27 @@ from api.routes.download import router as download_router, set_proxy_client as d
 from api.routes.admin    import router as admin_router,    set_start_time
 
 # ─── Shared proxy client ─────────────────────────────────────────────
-# One AsyncClient for all proxy routes — persistent connection pooling,
-# HTTP/2 multiplexing, and no per-request TCP/TLS handshake overhead.
-_proxy_client = httpx.AsyncClient(
-    follow_redirects=True,
-    event_hooks={"response": [check_safe_redirect]},
-    timeout=120.0,
-    http2=True if not (OUTBOUND_PROXY and PROXY_DOWNLOADS) else False,
-    proxy=OUTBOUND_PROXY if PROXY_DOWNLOADS else None,
-    limits=httpx.Limits(
-        max_connections=200,
-        max_keepalive_connections=50,
-        keepalive_expiry=90,
-    ),
-)
+# Lazily created inside lifespan (post-fork) to prevent SSL/socket inheritance issues.
+_proxy_client: httpx.AsyncClient | None = None
+
+
+def get_proxy_client() -> httpx.AsyncClient:
+    """Return the shared proxy AsyncClient, creating it lazily if needed."""
+    global _proxy_client
+    if _proxy_client is None or _proxy_client.is_closed:
+        _proxy_client = httpx.AsyncClient(
+            follow_redirects=True,
+            event_hooks={"response": [check_safe_redirect]},
+            timeout=120.0,
+            http2=True if not (OUTBOUND_PROXY and PROXY_DOWNLOADS) else False,
+            proxy=OUTBOUND_PROXY if PROXY_DOWNLOADS else None,
+            limits=httpx.Limits(
+                max_connections=200,
+                max_keepalive_connections=50,
+                keepalive_expiry=90,
+            ),
+        )
+    return _proxy_client
 
 
 # ─── Periodic housekeeping ───────────────────────────────────────────
@@ -117,8 +124,9 @@ async def lifespan(app: FastAPI):
         pass
 
     # Inject the shared proxy client into the routes that stream bytes
-    stream_set_client(_proxy_client)
-    download_set_client(_proxy_client)
+    client = get_proxy_client()
+    stream_set_client(client)
+    download_set_client(client)
 
     # Wire the periodic config-refresh middleware loader
     set_config_loader(load_config_from_redis)
@@ -143,15 +151,25 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-    await _proxy_client.aclose()
+    if _proxy_client is not None and not _proxy_client.is_closed:
+        await _proxy_client.aclose()
     await close_session()
     try:
         from api.proxy_manager import proxy_manager
         await proxy_manager.close_all()
     except Exception:
         pass
+    from api.redis_client import async_redis_client
+    if async_redis_client:
+        try:
+            await async_redis_client.close()
+        except Exception:
+            pass
     if redis_client:
-        redis_client.close()
+        try:
+            redis_client.close()
+        except Exception:
+            pass
 
 
 # ─── App ─────────────────────────────────────────────────────────────
@@ -196,12 +214,36 @@ def home():
         "version":        "2.0.0",
         "uptime_seconds": int(time.time() - _admin._start_time),
         "endpoints": {
+            "/healthz":             "Liveness & readiness health probe",
             "/api/resolve":         "Resolve share links. Params: url (required), mode [download|stream|list]",
             "/api/stats":           "Cache, rate-limiter and server statistics (admin only)",
             "/api/stream/manifest": "HLS master playlist for a share link",
             "/api/download":        "Proxied file download (HMAC-signed URL)",
             "/api/thumbnail":       "Proxied thumbnail image (HMAC-signed URL)",
             "/admin":               "Cloudvids file management dashboard",
+        },
+    }
+
+
+@app.get("/healthz")
+@app.get("/api/health")
+def healthz():
+    """Standardized liveness & readiness probe for Docker, Railway, Render."""
+    from api.routes import admin as _admin
+    from api.proxy_manager import proxy_manager
+    from api.redis_client import redis_client
+
+    total_proxies = proxy_manager.get_total_count()
+    healthy_proxies = proxy_manager.get_healthy_count()
+
+    return {
+        "status": "healthy",
+        "service": "terabridge-api",
+        "uptime_seconds": int(time.time() - _admin._start_time),
+        "redis": "connected" if redis_client else "in-memory",
+        "proxies": {
+            "total": total_proxies,
+            "healthy": healthy_proxies,
         },
     }
 
@@ -213,12 +255,103 @@ def ignore_browser_probes():
     return Response(status_code=204)
 
 
+def _is_admin_authorized(request: Request) -> bool:
+    """Check whether the request carries valid Admin API Key credentials."""
+    if not API_KEY and not REQUIRE_API_KEY:
+        return True
+    if not API_KEY:
+        return False
+
+    key = (
+        request.headers.get("X-API-Key")
+        or request.query_params.get("key")
+        or request.query_params.get("api_key")
+        or request.cookies.get("terabridge_admin_key")
+    )
+    if not key:
+        auth_h = request.headers.get("Authorization") or ""
+        if auth_h.startswith("Bearer "):
+            key = auth_h[7:].strip()
+
+    import hmac
+    if key and hmac.compare_digest(key, API_KEY):
+        return True
+    return False
+
+
+_ADMIN_LOCK_HTML = """<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeraBridge — Cloudvids Manager (Admin Access)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+      background: #000000;
+      color: #F5F5F7;
+    }
+    .glass-card {
+      background: rgba(26, 26, 32, 0.75);
+      backdrop-filter: blur(28px) saturate(180%);
+      border: 0.5px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+  <div class="glass-card max-w-md w-full p-8 text-center space-y-6">
+    <div class="w-14 h-14 bg-gradient-to-tr from-[#0A84FF] to-[#64D2FF] rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-[#0A84FF]/25">
+      <svg class="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight text-white">TeraBridge</h1>
+      <p class="text-xs text-white/50 mt-1 uppercase tracking-wider font-medium">Cloudvids Manager — Admin Console</p>
+    </div>
+    <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4">
+      <div>
+        <input id="keyInput" type="password" placeholder="Enter Admin API Key (X-API-Key)" required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] transition-all" />
+      </div>
+      <button type="submit"
+        class="w-full py-3 bg-[#0A84FF] hover:bg-[#0077ED] active:scale-[0.98] text-white font-medium text-sm rounded-xl transition-all shadow-md shadow-[#0A84FF]/20">
+        Unlock Dashboard
+      </button>
+      <p id="errorMsg" class="text-xs text-[#FF453A] hidden">Invalid key format or authentication rejected.</p>
+    </form>
+    <p class="text-[11px] text-white/30">Protected by TeraBridge secure HMAC & session safeguards.</p>
+  </div>
+  <script>
+    function handleLogin(e) {
+      e.preventDefault();
+      const val = document.getElementById('keyInput').value.trim();
+      if (!val) return;
+      sessionStorage.setItem('terabridge_api_key', val);
+      document.cookie = 'terabridge_admin_key=' + encodeURIComponent(val) + '; Path=/; Max-Age=2592000; SameSite=Lax';
+      window.location.href = window.location.pathname + '?key=' + encodeURIComponent(val);
+    }
+  </script>
+</body>
+</html>"""
+
+
 @app.get("/admin", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
-def serve_dashboard():
+def serve_dashboard(request: Request):
+    if not _is_admin_authorized(request):
+        return HTMLResponse(_ADMIN_LOCK_HTML, status_code=200)
+
     dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "dashboard.html")
     if os.path.exists(dashboard_path):
-        return FileResponse(dashboard_path, media_type="text/html")
+        resp = FileResponse(dashboard_path, media_type="text/html")
+        key = request.query_params.get("key") or request.query_params.get("api_key")
+        if key:
+            resp.set_cookie("terabridge_admin_key", key, max_age=2592000, httponly=True, samesite="lax")
+        return resp
     return HTMLResponse("<h3>Dashboard file not found.</h3>", status_code=404)
 
 

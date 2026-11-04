@@ -204,8 +204,12 @@ class ConfigRefreshMiddleware:
             global _last_config_check
             now = time.time()
             if now - _last_config_check > CONFIG_CHECK_INTERVAL and _config_loader:
-                _config_loader()
                 _last_config_check = now
+                try:
+                    import asyncio
+                    asyncio.create_task(asyncio.to_thread(_config_loader))
+                except Exception:
+                    pass
         await self.app(scope, receive, send)
 
 

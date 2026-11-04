@@ -10,7 +10,7 @@ Handles:
 import re
 import time
 import logging
-import threading
+import collections
 
 import httpx
 import jwt
@@ -23,7 +23,7 @@ from api.config import (
     REQUIRE_API_KEY,
     FIREBASE_PROJECT_ID,
 )
-from api.redis_client import redis_client
+from api.redis_client import redis_client, get_async_redis
 
 logger = logging.getLogger("terabridge.auth")
 
@@ -34,7 +34,7 @@ GOOGLE_KEYS_URL = (
 )
 _google_public_keys: dict = {}
 _keys_expiry: float = 0.0
-_recent_auth_errors: list = []
+_recent_auth_errors: collections.deque = collections.deque(maxlen=10)
 
 
 async def get_google_public_keys() -> dict:
@@ -95,8 +95,6 @@ async def verify_firebase_token(request: Request, token: str) -> bool:
 
 def _record_auth_error(msg: str):
     _recent_auth_errors.append({"timestamp": time.time(), "error": msg})
-    if len(_recent_auth_errors) > 10:
-        _recent_auth_errors.pop(0)
 
 
 def get_recent_auth_errors() -> list:
@@ -188,9 +186,17 @@ async def check_admin(request: Request) -> bool:
 
 
 # ─── User-tier resolution ─────────────────────────────────────────────
-_user_tier_cache: dict = {}
-_user_tier_cache_lock = threading.Lock()
+_user_tier_cache: collections.OrderedDict = collections.OrderedDict()
 USER_TIER_CACHE_TTL = 300  # seconds
+USER_TIER_CACHE_MAX = 1024
+
+
+def _cache_tier(uid: str, tier: str, expiry: float):
+    if uid in _user_tier_cache:
+        del _user_tier_cache[uid]
+    _user_tier_cache[uid] = (tier, expiry)
+    while len(_user_tier_cache) > USER_TIER_CACHE_MAX:
+        _user_tier_cache.popitem(last=False)
 
 
 async def resolve_and_cache_user_tier_async(request: Request, token: str):
@@ -201,20 +207,19 @@ async def resolve_and_cache_user_tier_async(request: Request, token: str):
         return
 
     now = time.time()
-    with _user_tier_cache_lock:
-        if uid in _user_tier_cache:
-            _, expiry = _user_tier_cache[uid]
-            if now < expiry:
-                return
+    if uid in _user_tier_cache:
+        _, expiry = _user_tier_cache[uid]
+        if now < expiry:
+            return
 
-    if redis_client:
+    async_redis = get_async_redis()
+    if async_redis:
         try:
-            cached_tier = redis_client.get(f"user:tier:{uid}")
+            cached_tier = await async_redis.get(f"user:tier:{uid}")
             if cached_tier:
                 if isinstance(cached_tier, bytes):
                     cached_tier = cached_tier.decode("utf-8")
-                with _user_tier_cache_lock:
-                    _user_tier_cache[uid] = (cached_tier, now + USER_TIER_CACHE_TTL)
+                _cache_tier(uid, str(cached_tier), now + USER_TIER_CACHE_TTL)
                 return
         except Exception:
             pass
@@ -233,11 +238,10 @@ async def resolve_and_cache_user_tier_async(request: Request, token: str):
                 tier_str = str(db_tier).lower()
                 if "premium" in tier_str or "pro" in tier_str:
                     resolved_tier = "premium"
-            with _user_tier_cache_lock:
-                _user_tier_cache[uid] = (resolved_tier, now + USER_TIER_CACHE_TTL)
-            if redis_client:
+            _cache_tier(uid, resolved_tier, now + USER_TIER_CACHE_TTL)
+            if async_redis:
                 try:
-                    redis_client.set(f"user:tier:{uid}", resolved_tier, ex=USER_TIER_CACHE_TTL)
+                    await async_redis.set(f"user:tier:{uid}", resolved_tier, ex=USER_TIER_CACHE_TTL)
                 except Exception:
                     pass
     except Exception as exc:
@@ -267,11 +271,10 @@ def get_user_tier(request: Request | None = None) -> str:
         return "free"
 
     now = time.time()
-    with _user_tier_cache_lock:
-        if uid in _user_tier_cache:
-            cached_tier, expiry = _user_tier_cache[uid]
-            if now < expiry:
-                return cached_tier
+    if uid in _user_tier_cache:
+        cached_tier, expiry = _user_tier_cache[uid]
+        if now < expiry:
+            return cached_tier
 
     if redis_client:
         try:
@@ -279,8 +282,7 @@ def get_user_tier(request: Request | None = None) -> str:
             if cached_tier:
                 if isinstance(cached_tier, bytes):
                     cached_tier = cached_tier.decode("utf-8")
-                with _user_tier_cache_lock:
-                    _user_tier_cache[uid] = (cached_tier, now + USER_TIER_CACHE_TTL)
+                _cache_tier(uid, str(cached_tier), now + USER_TIER_CACHE_TTL)
                 return cached_tier
         except Exception as exc:
             logger.warning("Redis user tier cache get error: %s", exc)

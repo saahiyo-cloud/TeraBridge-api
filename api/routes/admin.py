@@ -474,6 +474,13 @@ async def _handle_config_post(request: Request):
         for legacy in ("sign", "timestamp"):
             account_data.pop(legacy, None)
 
+        # Validate schema before persisting
+        if not account_data.get("cookie"):
+            return JSONResponse(
+                {"status": "error", "message": "Invalid account data: missing valid cookie."},
+                status_code=400,
+            )
+
         # Automatically fetch and attach account profile
         try:
             profile = await fetch_account_profile(account_data.get("cookie"), account_data.get("bds_token"))
@@ -482,7 +489,15 @@ async def _handle_config_post(request: Request):
         except Exception:
             pass
 
-        redis_client.hset(ACCOUNTS_HASH_KEY, account_id, json.dumps(account_data))
+        try:
+            payload_json = json.dumps(account_data)
+        except (TypeError, ValueError) as ser_err:
+            return JSONResponse(
+                {"status": "error", "message": f"Malformed account payload: {ser_err}"},
+                status_code=400,
+            )
+
+        redis_client.hset(ACCOUNTS_HASH_KEY, account_id, payload_json)
 
         active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
         if isinstance(active_id, bytes):
@@ -652,12 +667,15 @@ async def cron_validate(request: Request):
     accounts_checked = 0
     accounts_invalidated: list[tuple[str, str]] = []
 
+    cleanup_result = None
     if redis_client:
         try:
             raw_accounts = redis_client.hgetall(ACCOUNTS_HASH_KEY) or {}
             for acc_id, raw_val in raw_accounts.items():
                 acc_id_str = acc_id.decode("utf-8") if isinstance(acc_id, bytes) else acc_id
-                creds = json.loads(raw_val)
+                creds = safe_json_loads(raw_val)
+                if not isinstance(creds, dict) or not creds:
+                    continue
                 if creds.get("status", "healthy") == "healthy":
                     cookie_val = creds.get("cookie")
                     if cookie_val:
@@ -698,6 +716,17 @@ async def cron_validate(request: Request):
                     f"🚨 **Default Env Cookie Expired!**\nReason: `{msg}`"
                 )
 
+    # Optional / scheduled storage janitor: clean files older than CLEANUP_MAX_AGE_HOURS (default 24h)
+    cleanup_requested = request.query_params.get("cleanup") in ("1", "true") or (
+        os.environ.get("AUTO_CLEANUP_CLOUDVIDS", "false").lower() in ("true", "1")
+    )
+    if cleanup_requested:
+        try:
+            max_age = int(os.environ.get("CLEANUP_MAX_AGE_HOURS", 24))
+            cleanup_result = await cleanup_cloudvids_storage(account_id="active", max_age_hours=max_age)
+        except Exception as exc:
+            logger.warning("Cron storage cleanup failed: %s", exc)
+
     if redis_client:
         try:
             redis_client.hset("terabridge:status", values={
@@ -709,12 +738,15 @@ async def cron_validate(request: Request):
         except Exception as exc:
             logger.warning("Failed to write cron status to Redis: %s", exc)
 
-    return {
+    res_data = {
         "status":               "success",
         "checked_count":        accounts_checked,
         "invalidated_count":    len(accounts_invalidated),
         "invalidated_accounts": [a[0] for a in accounts_invalidated],
     }
+    if cleanup_result:
+        res_data["cleanup"] = cleanup_result
+    return res_data
 
 
 # ─── Cloudvids File & Storage Management Endpoints ────────────────────
@@ -738,7 +770,7 @@ async def _get_account_credentials(account_id: str | None = None) -> tuple[dict,
             if account_id:
                 raw = redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
                 if raw:
-                    data = json.loads(raw)
+                    data = safe_json_loads(raw)
                     target_cookie = data.get("cookie") or target_cookie
                     target_bds = data.get("bds_token") or target_bds
                     target_js = data.get("js_token") or target_js
@@ -757,7 +789,7 @@ async def _get_account_credentials(account_id: str | None = None) -> tuple[dict,
             if redis_client and account_id:
                 raw = redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
                 if raw:
-                    data = json.loads(raw)
+                    data = safe_json_loads(raw)
                     data["bds_token"] = target_bds
                     data["js_token"] = target_js
                     redis_client.hset(ACCOUNTS_HASH_KEY, account_id, json.dumps(data))
@@ -978,4 +1010,98 @@ async def delete_cloudvids(request: Request):
                 )
     except Exception as exc:
         return JSONResponse({"status": "error", "message": f"Delete request failed: {exc}"}, status_code=500)
+
+
+async def cleanup_cloudvids_storage(account_id: str | None = None, max_age_hours: int = 24) -> dict:
+    """
+    Deletes files in /cloudvids older than max_age_hours for an account (or active account).
+    Prevents storage buildup and TeraBox errno -10 (full) or 12.
+    """
+    target_id = account_id if (account_id and account_id != "active") else None
+    cookies_dict, bds, _ = await _get_account_credentials(target_id)
+    if not bds:
+        return {"status": "error", "message": "No valid bdstoken found for account."}
+
+    headers = {"User-Agent": UA, "Referer": "https://dm.1024terabox.com/"}
+    cutoff_time = int(time.time()) - (max_age_hours * 3600)
+
+    try:
+        async with httpx.AsyncClient(headers=headers, cookies=cookies_dict, follow_redirects=True, timeout=30.0) as client:
+            encoded_dir = urllib.parse.quote("/cloudvids")
+            url = f"{BASE_API}/api/list?{qp()}&dir={encoded_dir}&order=time&desc=0&showempty=0&page=1&num=1000&bdstoken={bds}"
+            r = await client.get(url)
+            data = r.json()
+            if data.get("errno") != 0:
+                return {"status": "error", "errno": data.get("errno"), "message": data.get("errmsg", "Failed to list /cloudvids")}
+
+            files = data.get("list", [])
+            paths_to_delete = []
+            freed_bytes = 0
+            for item in files:
+                if item.get("isdir"):
+                    continue
+                file_time = int(item.get("server_mtime") or item.get("server_ctime") or item.get("time") or 0)
+                if file_time > 0 and file_time < cutoff_time:
+                    p = item.get("path")
+                    if p and p.startswith("/cloudvids"):
+                        paths_to_delete.append(p)
+                        freed_bytes += int(item.get("size") or 0)
+
+            if not paths_to_delete:
+                return {
+                    "status": "success",
+                    "deleted_count": 0,
+                    "freed_bytes": 0,
+                    "freed_mb": 0.0,
+                    "message": "No expired files found in /cloudvids.",
+                }
+
+            # Delete in batches of 50
+            total_deleted = 0
+            for i in range(0, len(paths_to_delete), 50):
+                batch = paths_to_delete[i:i + 50]
+                del_url = f"{BASE_API}/api/filemanager?opera=delete&async=0&onnest=fail&bdstoken={bds}&clienttype=1&app_id=250528"
+                del_r = await client.post(del_url, data={"filelist": json.dumps(batch)})
+                del_data = del_r.json()
+                if del_data.get("errno") != 0:
+                    xpan_url = f"{BASE_API}/rest/2.0/xpan/file?method=filemanager&opera=delete&bdstoken={bds}"
+                    del_r2 = await client.post(xpan_url, data={"filelist": json.dumps(batch)})
+                    del_data = del_r2.json()
+
+                if del_data.get("errno") == 0:
+                    total_deleted += len(batch)
+
+            if total_deleted > 0:
+                cache.invalidate_dashboard(account_id or "active")
+
+            return {
+                "status": "success",
+                "deleted_count": total_deleted,
+                "freed_bytes": freed_bytes,
+                "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+                "message": f"Successfully deleted {total_deleted} expired file(s) from /cloudvids.",
+            }
+    except Exception as exc:
+        logger.warning("Error running cloudvids cleanup for account %s: %s", account_id, exc)
+        return {"status": "error", "message": str(exc)}
+
+
+@router.post("/api/admin/cloudvids/cleanup")
+async def trigger_cloudvids_cleanup(request: Request):
+    if not await check_admin(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized: Admin API key required."}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    account_id = request.query_params.get("account_id") or body.get("account_id") or "active"
+    try:
+        max_age_hours = int(request.query_params.get("max_age_hours") or body.get("max_age_hours") or 24)
+    except (ValueError, TypeError):
+        max_age_hours = 24
+
+    res = await cleanup_cloudvids_storage(account_id, max_age_hours)
+    return JSONResponse(res, status_code=200 if res.get("status") == "success" else 400)
 

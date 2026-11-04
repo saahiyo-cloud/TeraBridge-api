@@ -33,6 +33,32 @@ class RateLimiter:
         self.total_blocked = 0
 
     # ── Admission check ────────────────────────────────────────────────
+    async def is_allowed_async(self, ip: str) -> bool:
+        """Non-blocking async rate-limit check using AsyncRedis."""
+        from api.redis_client import async_redis_client
+        if async_redis_client:
+            try:
+                now = time.time()
+                key = f"rate_limit:{ip}"
+                pipe = async_redis_client.pipeline()
+                pipe.zremrangebyscore(key, 0, now - self._window)
+                pipe.zadd(key, {str(now): now})
+                pipe.zcard(key)
+                pipe.expire(key, self._window)
+                res = await pipe.exec()
+                count = int(res[2])
+                if count > self._max:
+                    try:
+                        await async_redis_client.incr("stats:rate_limit_blocked")
+                    except Exception:
+                        pass
+                    return False
+                return True
+            except Exception as exc:
+                logger.warning("Async Redis rate limit check error: %s", exc)
+
+        return self.is_allowed(ip)
+
     def is_allowed(self, ip: str) -> bool:
         now = time.time()
 
@@ -97,7 +123,8 @@ class RateLimiter:
             try:
                 blocked = int(self._redis.get("stats:rate_limit_blocked") or 0)
                 try:
-                    active_clients = len(self._redis.keys("rate_limit:*") or [])
+                    from api.cache import _scan_keys
+                    active_clients = len(_scan_keys(self._redis, "rate_limit:*"))
                 except Exception:
                     active_clients = "unknown"
                 return {

@@ -34,6 +34,72 @@ def set_proxy_client(client: httpx.AsyncClient):
     _proxy_client = client
 
 
+def _get_active_client() -> httpx.AsyncClient:
+    global _proxy_client
+    if _proxy_client is None or _proxy_client.is_closed:
+        try:
+            from api.index import get_proxy_client
+            _proxy_client = get_proxy_client()
+        except Exception:
+            _proxy_client = httpx.AsyncClient(follow_redirects=True, timeout=120.0)
+    return _proxy_client
+
+
+def parse_byte_range(range_header: str | None, file_size: int | None) -> tuple[int, int, int] | None:
+    """
+    Parses an RFC 9110 / RFC 7233 Range header against known file_size.
+    Returns:
+        (start, end, status_code) where status_code is 200 (full content) or 206 (partial range).
+        Returns None if range is unsatisfiable (must return HTTP 416).
+    """
+    if not file_size or file_size <= 0:
+        return (0, 0, 200)
+
+    if not range_header or not range_header.strip():
+        return (0, file_size - 1, 200)
+
+    header = range_header.strip()
+    if not header.startswith("bytes="):
+        # Unknown unit: RFC 9110 specifies servers MUST ignore unrecognized units and return full content
+        return (0, file_size - 1, 200)
+
+    spec = header[6:].split(",")[0].strip()
+
+    # Suffix byte range: "-N" (last N bytes of the file)
+    if spec.startswith("-"):
+        try:
+            suffix_len = int(spec[1:])
+            if suffix_len <= 0:
+                return None
+            start = max(0, file_size - suffix_len)
+            end = file_size - 1
+            return (start, end, 206)
+        except ValueError:
+            return (0, file_size - 1, 200)
+
+    # Standard range: "N-M" or "N-"
+    if "-" in spec:
+        parts = spec.split("-", 1)
+        try:
+            start = int(parts[0])
+            if start < 0 or start >= file_size:
+                # First byte position is beyond end of representation -> 416 Unsatisfiable
+                return None
+            if parts[1].strip():
+                end = int(parts[1])
+                if end < start:
+                    # Invalid range: end before start -> 416 Unsatisfiable
+                    return None
+                end = min(end, file_size - 1)
+            else:
+                end = file_size - 1
+            return (start, end, 206)
+        except ValueError:
+            return (0, file_size - 1, 200)
+
+    return (0, file_size - 1, 200)
+
+
 # ─── /api/download ───────────────────────────────────────────────────
 
 @router.api_route("/api/download", methods=["GET", "OPTIONS"])
@@ -70,8 +136,9 @@ async def download_file_route(request: Request):
                 if not is_transcoding:
                     cache.put(share_url, "d", False, cached_res)
         except Exception as exc:
+            logger.exception("Failed to resolve download details for surl=%s: %s", surl, exc)
             return JSONResponse(
-                {"status": "error", "message": f"Failed to resolve download details: {exc}"},
+                {"status": "error", "message": "Failed to resolve download details from upstream service."},
                 status_code=500,
             )
 
@@ -108,17 +175,33 @@ async def download_file_route(request: Request):
         range_header = request.headers.get("Range")
         quoted_filename = urllib.parse.quote(filename)
 
+        async def dlink_refresher() -> str | None:
+            """Callback to refresh expired dlink mid-download on upstream 403/410."""
+            try:
+                cache.invalidate(share_url, "d", False)
+                fresh_res = await resolve_link_with_retry(share_url, "d", False, None)
+                if fresh_res.get("errno") == 0:
+                    fresh_file = _find_file(fresh_res.get("files", []), fs_id)
+                    if fresh_file and fresh_file.get("dlink"):
+                        cache.put(share_url, "d", False, fresh_res)
+                        return fresh_file.get("dlink")
+            except Exception as e:
+                logger.warning("Failed to refresh dlink during download: %s", e)
+            return None
+
         # Multi-connection stream for large files (> 4 MB)
         if file_size and file_size > 4 * 1024 * 1024:
-            start, end, status_code = 0, file_size - 1, 200
-
             if range_header:
-                m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
-                if m:
-                    start = int(m.group(1))
-                    if m.group(2):
-                        end = min(int(m.group(2)), file_size - 1)
-                    status_code = 206
+                range_info = parse_byte_range(range_header, file_size)
+                if range_info is None:
+                    return JSONResponse(
+                        {"status": "error", "message": "Requested range not satisfiable."},
+                        status_code=416,
+                        headers={"Content-Range": f"bytes */{file_size}"},
+                    )
+                start, end, status_code = range_info
+            else:
+                start, end, status_code = 0, file_size - 1, 200
 
             content_len = end - start + 1
             resp_headers = {
@@ -141,14 +224,26 @@ async def download_file_route(request: Request):
                 cookies=COOKIES_DICT,
                 concurrency=4,
                 chunk_size=2 * 1024 * 1024,
+                dlink_refresher=dlink_refresher,
             )
             return StreamingResponse(stream_gen, status_code=status_code, headers=resp_headers)
 
         # Single-stream fallback for small files
-        if range_header:
+        if range_header and file_size:
+            range_info = parse_byte_range(range_header, file_size)
+            if range_info is None:
+                return JSONResponse(
+                    {"status": "error", "message": "Requested range not satisfiable."},
+                    status_code=416,
+                    headers={"Content-Range": f"bytes */{file_size}"},
+                )
+            s_byte, e_byte, sc = range_info
+            if sc == 206:
+                headers["Range"] = f"bytes={s_byte}-{e_byte}"
+        elif range_header:
             headers["Range"] = range_header
 
-        client = _proxy_client
+        client = _get_active_client()
         req_ctx = client.stream("GET", dlink, headers=headers, cookies=COOKIES_DICT, timeout=120.0)
         req = await req_ctx.__aenter__()
 
@@ -175,8 +270,9 @@ async def download_file_route(request: Request):
         return StreamingResponse(generate(), status_code=req.status_code, headers=resp_headers)
 
     except Exception as exc:
+        logger.exception("Download proxy error for surl=%s: %s", surl, exc)
         return JSONResponse(
-            {"status": "error", "message": f"Download proxy error: {exc}"},
+            {"status": "error", "message": "Download proxy streaming error."},
             status_code=500,
         )
 

@@ -475,7 +475,7 @@ async def resolve(request: Request):
 
     ip = client_ip(request)
 
-    if not rate_limiter.is_allowed(ip):
+    if not await rate_limiter.is_allowed_async(ip):
         return JSONResponse(
             {
                 "status": "error",
@@ -563,9 +563,24 @@ async def resolve(request: Request):
         _acquire_resolve_lock(cache_key)
 
     try:
-        res = await resolve_link_with_retry(
-            link, action=action, wait_for_transcoding=wait_for_transcoding
-        )
+        from api.config import RESOLVE_TIMEOUT_SECONDS
+        try:
+            res = await asyncio.wait_for(
+                resolve_link_with_retry(
+                    link, action=action, wait_for_transcoding=wait_for_transcoding
+                ),
+                timeout=float(RESOLVE_TIMEOUT_SECONDS),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[Resolve] Operation timed out after %ds for %s", RESOLVE_TIMEOUT_SECONDS, link)
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "message": f"Upstream resolution timed out after {RESOLVE_TIMEOUT_SECONDS}s. Please retry shortly.",
+                },
+                status_code=504,
+            )
+
         if res.get("errno") != 0:
             return JSONResponse(
                 {"status": "error", "message": res.get("error", "Unknown resolution error.")},
@@ -599,10 +614,9 @@ async def resolve(request: Request):
     except ValueError as exc:
         return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
+        logger.exception("[Resolve] Server error handling link: %s", exc)
         return JSONResponse(
-            {"status": "error", "message": f"Server error: {exc}"},
+            {"status": "error", "message": "An internal server error occurred while resolving the link."},
             status_code=500,
         )
     finally:

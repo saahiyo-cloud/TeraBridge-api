@@ -10,6 +10,7 @@ import zipfile
 import time
 import hashlib
 import shutil
+import threading
 
 # Load environment variables from .env file if present
 try:
@@ -72,11 +73,25 @@ def set_outbound_proxy(proxy_url: str | None):
         logger.info("Outbound proxy changed: %s -> %s", OUTBOUND_PROXY, clean_proxy)
         OUTBOUND_PROXY = clean_proxy
         if _session is not None and not _session.is_closed:
+            old_session = _session
             _session = None
+            async def _safe_close(cl):
+                try:
+                    await cl.aclose()
+                except Exception:
+                    pass
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(_safe_close(old_session))
+            except Exception:
+                pass
 
 UA = "dubox;P2SP;2.2.91.249;dubox;4.2.0.1;I2404;android-android;16;JSbridge1.0.10;jointbridge;1.1.39;"
 ROOT_PATH = "/cloudvids"
 VIDEO_EXTS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.3gp', '.mpg', '.mpeg', '.ts', '.m3u8')
+
+_credentials_lock = threading.Lock()
 
 def parse_cookies(cookie_str):
     cookies = {}
@@ -88,31 +103,33 @@ def parse_cookies(cookie_str):
     return cookies
 
 def update_credentials(cookie=None, js_token=None, bds_token=None, logid=None):
-    """Dynamically update Terabox global cookies and tokens in the session."""
-    global COOKIE, COOKIES_DICT, JSTOKEN, BDSTOKEN, LOGID
-    if cookie:
-        COOKIE = cookie
-        COOKIES_DICT.clear()
-        COOKIES_DICT.update(parse_cookies(cookie))
-        # Clear existing cookies in session and update with new ones
-        client = get_session()
-        client.cookies.clear()
-        for k, v in COOKIES_DICT.items():
-            client.cookies.set(k, v)
-        try:
-            from api.proxy_manager import proxy_manager
-            proxy_manager.sync_cookies(COOKIES_DICT)
-        except Exception:
-            pass
-        invalidate_token_cache()
-    if js_token:
-        JSTOKEN = js_token
-    if bds_token:
-        BDSTOKEN = bds_token
-        global _LAST_TOKEN_REFRESH
-        _LAST_TOKEN_REFRESH = time.time()
-    if logid:
-        LOGID = logid
+    """Dynamically and atomically update Terabox global cookies and tokens in the session."""
+    global COOKIE, COOKIES_DICT, JSTOKEN, BDSTOKEN, LOGID, _LAST_TOKEN_REFRESH
+    with _credentials_lock:
+        if cookie:
+            COOKIE = cookie
+            COOKIES_DICT.clear()
+            COOKIES_DICT.update(parse_cookies(cookie))
+            # Clear existing cookies in session and update with new ones
+            client = get_session()
+            client.cookies.clear()
+            for k, v in COOKIES_DICT.items():
+                client.cookies.set(k, v)
+            try:
+                from api.proxy_manager import proxy_manager
+                proxy_manager.sync_cookies(COOKIES_DICT)
+            except Exception:
+                pass
+            invalidate_token_cache()
+        if js_token:
+            JSTOKEN = js_token
+        if bds_token:
+            BDSTOKEN = bds_token
+            _LAST_TOKEN_REFRESH = time.time()
+        if logid:
+            LOGID = logid
+        elif not LOGID:
+            LOGID = _new_logid()
 
 def invalidate_token_cache():
     """Clear cached BDS/JS tokens so next resolve fetches fresh credentials."""
@@ -228,8 +245,10 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
-def qp():
-    return f"app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={JSTOKEN}&dp-logid={LOGID}"
+def qp(jstoken: str | None = None, logid: str | None = None) -> str:
+    jt = jstoken or JSTOKEN or ""
+    lid = logid or LOGID or _new_logid()
+    return f"app_id=250528&web=1&channel=dubox&clienttype=0&jsToken={jt}&dp-logid={lid}"
 
 
 def _new_logid():
@@ -460,6 +479,17 @@ def get_session():
     except RuntimeError:
         pass
     if _session is None or _session.is_closed or (_session_loop is not None and _session_loop != current_loop):
+        if _session is not None and not _session.is_closed and current_loop:
+            old_cl = _session
+            async def _safe_close_sess(c):
+                try:
+                    await c.aclose()
+                except Exception:
+                    pass
+            try:
+                current_loop.create_task(_safe_close_sess(old_cl))
+            except Exception:
+                pass
         _session = _create_session()
         _session_loop = current_loop
     return _session
@@ -467,9 +497,11 @@ def get_session():
 
 async def close_session():
     """Close the current client without leaving a permanently closed global."""
-    global _session
+    global _session, _session_loop
     if _session is not None and not _session.is_closed:
         await _session.aclose()
+    _session = None
+    _session_loop = None
 
 _SURL_MIN_LEN = 8     # empirical floor; real Terabox surls are 22-23 chars
 _LEADING_ONE_MAX_STRIPS = 4  # never strip more than this many leading '1' chars
@@ -1164,11 +1196,12 @@ async def multi_connection_stream_generator(
     concurrency: int = 4,
     chunk_size: int = 2 * 1024 * 1024,
     max_ahead: int = 6,
+    dlink_refresher = None,
 ):
     """
     Asynchronously streams [start_byte, end_byte] from dlink using concurrency parallel connections.
     Uses bounded look-ahead (max_ahead chunks) to prevent excessive memory usage.
-    Yields chunks in exact sequential order.
+    Yields chunks in exact sequential order. Supports dynamic mid-download dlink refresh on 403/410.
     """
     slices = []
     cur = start_byte
@@ -1186,8 +1219,12 @@ async def multi_connection_stream_generator(
     window_sem = asyncio.Semaphore(max_ahead)
     cancelled = False
 
+    current_dlink = dlink
+    refresh_lock = asyncio.Lock()
+    refreshed = False
+
     async def worker(c_idx, c_start, c_end, client):
-        nonlocal cancelled
+        nonlocal cancelled, current_dlink, refreshed
         if cancelled:
             return
         await window_sem.acquire()
@@ -1197,19 +1234,57 @@ async def multi_connection_stream_generator(
             if cancelled:
                 return
             req_headers = {**headers, "Range": f"bytes={c_start}-{c_end}"}
-            for attempt in range(3):
+            expected_chunk_size = c_end - c_start + 1
+            for attempt in range(4):
                 try:
-                    res = await client.get(dlink, headers=req_headers, timeout=60.0)
-                    if res.status_code in (200, 206):
+                    res = await client.get(current_dlink, headers=req_headers, timeout=60.0)
+                    if res.status_code == 206:
+                        if len(res.content) == expected_chunk_size:
+                            ready_chunks[c_idx] = res.content
+                            ready_events[c_idx].set()
+                            return
+                        else:
+                            logger.warning(
+                                "Chunk %d payload truncated (got %d bytes, expected %d)",
+                                c_idx, len(res.content), expected_chunk_size
+                            )
+                    elif res.status_code == 200 and total_chunks == 1 and c_start == 0:
                         ready_chunks[c_idx] = res.content
                         ready_events[c_idx].set()
                         return
-                except Exception:
-                    if attempt == 2:
+                    elif res.status_code in (403, 410) and dlink_refresher is not None and not refreshed:
+                        async with refresh_lock:
+                            if not refreshed:
+                                logger.info(
+                                    "Upstream returned %d on chunk %d. Attempting dlink refresh...",
+                                    res.status_code, c_idx
+                                )
+                                try:
+                                    new_dlink = await dlink_refresher()
+                                    if new_dlink:
+                                        current_dlink = new_dlink
+                                        refreshed = True
+                                        logger.info("Successfully refreshed dlink mid-stream.")
+                                except Exception as ref_err:
+                                    logger.warning("Failed to refresh dlink mid-stream: %s", ref_err)
+                        # Retry with the active dlink
+                        continue
+                    else:
+                        logger.warning(
+                            "Chunk %d request failed: status %d (expected 206 Partial Content)",
+                            c_idx, res.status_code
+                        )
+                except Exception as chunk_exc:
+                    logger.debug("Chunk %d attempt %d failed: %s", c_idx, attempt, chunk_exc)
+                    if attempt >= 3:
                         ready_chunks[c_idx] = None
                         ready_events[c_idx].set()
                         return
                     await asyncio.sleep(1)
+
+            if c_idx not in ready_chunks:
+                ready_chunks[c_idx] = None
+                ready_events[c_idx].set()
 
     async with httpx.AsyncClient(
         cookies=cookies,

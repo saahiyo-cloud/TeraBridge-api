@@ -15,44 +15,72 @@ except ImportError:
 
 logger = logging.getLogger("terabridge.config")
 
+def _get_int(key: str, default: int) -> int:
+    val = os.environ.get(key)
+    if val is None or val.strip() == "":
+        return default
+    try:
+        return int(val.strip())
+    except (ValueError, TypeError):
+        logger.warning("Invalid integer for env var %s=%r; using default %d", key, val, default)
+        return default
+
+def _get_bool(key: str, default: bool) -> bool:
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    return val.strip().lower() not in ("0", "false", "no", "off")
+
 # ─── Core API settings ────────────────────────────────────────────────
-API_KEY        = os.environ.get("API_KEY")
-HMAC_SECRET    = os.environ.get("HMAC_SECRET") or API_KEY
-REQUIRE_API_KEY = os.environ.get("REQUIRE_API_KEY", "auto").lower() not in ("0", "false", "no")
-CRON_SECRET    = os.environ.get("CRON_SECRET")
+API_KEY         = os.environ.get("API_KEY")
+_explicit_hmac  = os.environ.get("HMAC_SECRET")
+if _explicit_hmac:
+    HMAC_SECRET = _explicit_hmac
+elif API_KEY:
+    logger.warning(
+        "HMAC_SECRET is unset; falling back to API_KEY. "
+        "In production, set HMAC_SECRET separately to prevent cascading key compromise."
+    )
+    HMAC_SECRET = API_KEY
+else:
+    logger.warning("Neither HMAC_SECRET nor API_KEY is set. URL signatures will be disabled or insecure.")
+    HMAC_SECRET = None
+
+REQUIRE_API_KEY = _get_bool("REQUIRE_API_KEY", True)
+CRON_SECRET     = os.environ.get("CRON_SECRET")
 
 # ─── Cache ────────────────────────────────────────────────────────────
-CACHE_TTL_SECONDS     = int(os.environ.get("CACHE_TTL", 300))
-CACHE_MAX_ENTRIES     = int(os.environ.get("CACHE_MAX_ENTRIES", 512))
-CACHE_THUMBNAIL_TTL   = int(os.environ.get("CACHE_THUMBNAIL_TTL", 86400))
-CACHE_DASHBOARD_TTL   = int(os.environ.get("CACHE_DASHBOARD_TTL", 60))
+CACHE_TTL_SECONDS     = _get_int("CACHE_TTL", 300)
+CACHE_MAX_ENTRIES     = _get_int("CACHE_MAX_ENTRIES", 512)
+CACHE_THUMBNAIL_TTL   = _get_int("CACHE_THUMBNAIL_TTL", 86400)
+CACHE_DASHBOARD_TTL   = _get_int("CACHE_DASHBOARD_TTL", 60)
 
 # ─── Rate limiting ────────────────────────────────────────────────────
-RATE_LIMIT_RPM    = int(os.environ.get("RATE_LIMIT_RPM", 30))
-RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_RPM    = _get_int("RATE_LIMIT_RPM", 30)
+RATE_LIMIT_WINDOW = _get_int("RATE_LIMIT_WINDOW", 60)  # seconds
 
 # ─── HMAC signature TTLs (seconds) ───────────────────────────────────
 TIERED_SIGNATURE_TTLS = {
     "free": {
-        "segment":   int(os.environ.get("SIG_TTL_SEGMENT_FREE",   30 * 60)),
-        "download":  int(os.environ.get("SIG_TTL_DOWNLOAD_FREE",  2 * 3600)),
-        "manifest":  int(os.environ.get("SIG_TTL_MANIFEST_FREE",  24 * 3600)),
-        "thumbnail": int(os.environ.get("SIG_TTL_THUMBNAIL_FREE", 24 * 3600)),
+        "segment":   _get_int("SIG_TTL_SEGMENT_FREE",   30 * 60),
+        "download":  _get_int("SIG_TTL_DOWNLOAD_FREE",  2 * 3600),
+        "manifest":  _get_int("SIG_TTL_MANIFEST_FREE",  24 * 3600),
+        "thumbnail": _get_int("SIG_TTL_THUMBNAIL_FREE", 24 * 3600),
     },
     "premium": {
-        "segment":   int(os.environ.get("SIG_TTL_SEGMENT_PREMIUM",   2 * 3600)),
-        "download":  int(os.environ.get("SIG_TTL_DOWNLOAD_PREMIUM",  24 * 3600)),
-        "manifest":  int(os.environ.get("SIG_TTL_MANIFEST_PREMIUM",  30 * 24 * 3600)),
-        "thumbnail": int(os.environ.get("SIG_TTL_THUMBNAIL_PREMIUM", 30 * 24 * 3600)),
+        "segment":   _get_int("SIG_TTL_SEGMENT_PREMIUM",   2 * 3600),
+        "download":  _get_int("SIG_TTL_DOWNLOAD_PREMIUM",  24 * 3600),
+        "manifest":  _get_int("SIG_TTL_MANIFEST_PREMIUM",  30 * 24 * 3600),
+        "thumbnail": _get_int("SIG_TTL_THUMBNAIL_PREMIUM", 30 * 24 * 3600),
     },
 }
-DEFAULT_SIGNATURE_TTL = int(os.environ.get("SIG_TTL_DEFAULT", 24 * 3600))
+DEFAULT_SIGNATURE_TTL = _get_int("SIG_TTL_DEFAULT", 24 * 3600)
 
 # ─── Firebase ─────────────────────────────────────────────────────────
 FIREBASE_PROJECT_ID = (
     os.environ.get("VITE_FIREBASE_PROJECT_ID")
     or os.environ.get("FIREBASE_PROJECT_ID")
-    or "teraplay-project"
+    or None
 )
 
 # ─── Platform detection ───────────────────────────────────────────────
@@ -89,6 +117,8 @@ ALLOWED_ORIGINS = frozenset(
 REDIRECT_SEGMENTS        = os.environ.get("REDIRECT_SEGMENTS", "False").lower() in ("true", "1")
 NOTIFICATION_WEBHOOK_URL = os.environ.get("NOTIFICATION_WEBHOOK_URL")
 CONFIG_CHECK_INTERVAL    = 60  # seconds between dynamic config refreshes
+ALLOW_LEGACY_SIGNATURES  = _get_bool("ALLOW_LEGACY_SIGNATURES", False)
+RESOLVE_TIMEOUT_SECONDS  = _get_int("RESOLVE_TIMEOUT_SECONDS", 60)
 
 # ─── Outbound TeraBox Proxy (Bypasses Datacenter IP Blocks / CAPTCHA) ──
 OUTBOUND_PROXY = (

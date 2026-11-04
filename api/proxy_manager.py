@@ -26,6 +26,7 @@ import sys
 import time
 import urllib.parse
 from contextlib import asynccontextmanager
+import threading
 from typing import Any
 
 import httpx
@@ -235,34 +236,37 @@ class ProxyPoolManager:
         self._clients: dict[str, httpx.AsyncClient] = {}
         self._client_loops: dict[str, asyncio.AbstractEventLoop] = {}
         self._rr_index: int = 0
-        self._lock = asyncio.Lock()
+        self._thread_lock = threading.RLock()
         self._initialized = False
         self._persist_to_redis = persist_to_redis
 
     def get_total_count(self) -> int:
-        return len(self._entries)
+        with self._thread_lock:
+            return len(self._entries)
 
     def get_healthy_count(self) -> int:
-        return sum(1 for e in self._entries if not e.is_cooling_down())
+        with self._thread_lock:
+            return sum(1 for e in self._entries if not e.is_cooling_down())
 
     def get_summary(self) -> dict[str, Any]:
-        healthy = 0
-        cooldown = 0
-        proxies_data = []
-        for e in self._entries:
-            d = e.to_dict()
-            if d["status"] == "cooldown":
-                cooldown += 1
-            elif d["status"] == "healthy":
-                healthy += 1
-            proxies_data.append(d)
+        with self._thread_lock:
+            healthy = 0
+            cooldown = 0
+            proxies_data = []
+            for e in self._entries:
+                d = e.to_dict()
+                if d["status"] == "cooldown":
+                    cooldown += 1
+                elif d["status"] == "healthy":
+                    healthy += 1
+                proxies_data.append(d)
 
-        return {
-            "total": len(self._entries),
-            "healthy": healthy,
-            "cooldown": cooldown,
-            "proxies": proxies_data,
-        }
+            return {
+                "total": len(self._entries),
+                "healthy": healthy,
+                "cooldown": cooldown,
+                "proxies": proxies_data,
+            }
 
     # ── Proxy Pool Mutation ──────────────────────────────────────────
 
@@ -294,63 +298,66 @@ class ProxyPoolManager:
     def set_proxies(self, proxy_inputs: list[str] | str | None) -> int:
         """Replace the entire proxy pool with the given inputs."""
         new_urls = self.parse_proxy_inputs(proxy_inputs)
-        existing_map = {e.url: e for e in self._entries}
+        with self._thread_lock:
+            existing_map = {e.url: e for e in self._entries}
 
-        new_entries: list[ProxyEntry] = []
-        for url in new_urls:
-            if url in existing_map:
-                new_entries.append(existing_map[url])
-            else:
-                new_entries.append(ProxyEntry(url=url))
+            new_entries: list[ProxyEntry] = []
+            for url in new_urls:
+                if url in existing_map:
+                    new_entries.append(existing_map[url])
+                else:
+                    new_entries.append(ProxyEntry(url=url))
 
-        # Close clients for removed proxies
-        new_url_set = set(new_urls)
-        for url, client in list(self._clients.items()):
-            if url not in new_url_set:
+            # Close clients for removed proxies
+            new_url_set = set(new_urls)
+            for url, client in list(self._clients.items()):
+                if url not in new_url_set:
+                    try:
+                        if not client.is_closed:
+                            asyncio.create_task(client.aclose())
+                    except Exception:
+                        pass
+                    self._clients.pop(url, None)
+                    self._client_loops.pop(url, None)
+
+            self._entries = new_entries
+            self._rr_index = 0
+            self.save_to_redis()
+            logger.info("Proxy pool updated: %d active proxies", len(self._entries))
+            return len(self._entries)
+
+    def add_proxies(self, proxy_inputs: list[str] | str | None) -> int:
+        """Add new proxies to the pool without clearing existing ones."""
+        new_urls = self.parse_proxy_inputs(proxy_inputs)
+        with self._thread_lock:
+            existing_urls = {e.url for e in self._entries}
+            added = 0
+            for url in new_urls:
+                if url not in existing_urls:
+                    self._entries.append(ProxyEntry(url=url))
+                    existing_urls.add(url)
+                    added += 1
+
+            if added > 0:
+                self.save_to_redis()
+                logger.info("Added %d new proxies to pool (total: %d)", added, len(self._entries))
+            return added
+
+    def clear_proxies(self) -> None:
+        """Clear all proxies from the pool."""
+        with self._thread_lock:
+            for client in self._clients.values():
                 try:
                     if not client.is_closed:
                         asyncio.create_task(client.aclose())
                 except Exception:
                     pass
-                self._clients.pop(url, None)
-                self._client_loops.pop(url, None)
-
-        self._entries = new_entries
-        self._rr_index = 0
-        self.save_to_redis()
-        logger.info("Proxy pool updated: %d active proxies", len(self._entries))
-        return len(self._entries)
-
-    def add_proxies(self, proxy_inputs: list[str] | str | None) -> int:
-        """Add new proxies to the pool without clearing existing ones."""
-        new_urls = self.parse_proxy_inputs(proxy_inputs)
-        existing_urls = {e.url for e in self._entries}
-        added = 0
-        for url in new_urls:
-            if url not in existing_urls:
-                self._entries.append(ProxyEntry(url=url))
-                existing_urls.add(url)
-                added += 1
-
-        if added > 0:
+            self._clients.clear()
+            self._client_loops.clear()
+            self._entries.clear()
+            self._rr_index = 0
             self.save_to_redis()
-            logger.info("Added %d new proxies to pool (total: %d)", added, len(self._entries))
-        return added
-
-    def clear_proxies(self) -> None:
-        """Clear all proxies from the pool."""
-        for client in self._clients.values():
-            try:
-                if not client.is_closed:
-                    asyncio.create_task(client.aclose())
-            except Exception:
-                pass
-        self._clients.clear()
-        self._client_loops.clear()
-        self._entries.clear()
-        self._rr_index = 0
-        self.save_to_redis()
-        logger.info("Proxy pool cleared")
+            logger.info("Proxy pool cleared")
 
     # ── Proxy Selection & Context ─────────────────────────────────────
 
@@ -361,36 +368,38 @@ class ProxyPoolManager:
         If all proxies are cooling down, returns the proxy closest to cooldown
         expiration as a best-effort fallback.
         """
-        if not self._entries:
-            return None
+        with self._thread_lock:
+            if not self._entries:
+                return None
 
-        # Check and update cooldown states
-        eligible = [e for e in self._entries if not e.is_cooling_down()]
+            # Check and update cooldown states
+            eligible = [e for e in self._entries if not e.is_cooling_down()]
 
-        if eligible:
-            entry = eligible[self._rr_index % len(eligible)]
-            self._rr_index += 1
+            if eligible:
+                entry = eligible[self._rr_index % len(eligible)]
+                self._rr_index = (self._rr_index + 1) % len(eligible)
+                entry.last_used = time.time()
+                return entry
+
+            # All proxies in cooldown: pick the one that recovers soonest
+            entry = min(self._entries, key=lambda e: e.cooldown_until)
             entry.last_used = time.time()
+            logger.warning(
+                "All %d proxies in cooldown. Best-effort selection: %s (quarantine remaining: %ds)",
+                len(self._entries),
+                mask_proxy(entry.url),
+                entry.cooldown_remaining(),
+            )
             return entry
-
-        # All proxies in cooldown: pick the one that recovers soonest
-        entry = min(self._entries, key=lambda e: e.cooldown_until)
-        entry.last_used = time.time()
-        logger.warning(
-            "All %d proxies in cooldown. Best-effort selection: %s (quarantine remaining: %ds)",
-            len(self._entries),
-            mask_proxy(entry.url),
-            entry.cooldown_remaining(),
-        )
-        return entry
 
     def get_entry_by_url(self, url: str | None) -> ProxyEntry | None:
         if not url:
             return None
         norm = normalize_proxy(url)
-        for e in self._entries:
-            if e.url == norm or e.url == url:
-                return e
+        with self._thread_lock:
+            for e in self._entries:
+                if e.url == norm or e.url == url:
+                    return e
         return None
 
     def get_client_for_proxy(self, proxy_url: str | None) -> httpx.AsyncClient | None:
@@ -487,12 +496,13 @@ class ProxyPoolManager:
         """Record a successful request through this proxy."""
         if not proxy_url:
             return
-        entry = self.get_entry_by_url(proxy_url)
-        if entry:
-            entry.success_count += 1
-            entry.consecutive_failures = 0
-            entry.status = "healthy"
-            entry.last_error = None
+        with self._thread_lock:
+            entry = self.get_entry_by_url(proxy_url)
+            if entry:
+                entry.success_count += 1
+                entry.consecutive_failures = 0
+                entry.status = "healthy"
+                entry.last_error = None
 
     def mark_failure(
         self,
@@ -503,46 +513,48 @@ class ProxyPoolManager:
         """Quarantine a proxy after a failure or rate-limit with smart transient handling."""
         if not proxy_url:
             return
-        entry = self.get_entry_by_url(proxy_url)
-        if entry:
-            entry.failure_count += 1
-            entry.consecutive_failures += 1
-            entry.last_error = reason
+        with self._thread_lock:
+            entry = self.get_entry_by_url(proxy_url)
+            if entry:
+                entry.failure_count += 1
+                entry.consecutive_failures += 1
+                entry.last_error = reason
 
-            reason_lower = reason.lower()
-            is_hard_waf_or_auth = any(
-                w in reason_lower
-                for w in ("400141", "400810", "402", "407", "waf", "captcha", "forbidden", "unauthorized")
-            )
+                reason_lower = reason.lower()
+                is_hard_waf_or_auth = any(
+                    w in reason_lower
+                    for w in ("400141", "400810", "402", "407", "waf", "captcha", "forbidden", "unauthorized")
+                )
 
-            # For transient network timeouts, allow 1 retry before hard-quarantining
-            if not is_hard_waf_or_auth and entry.consecutive_failures < 2:
-                # Soft cooldown: brief 15s pause so next immediate request picks another proxy
-                entry.cooldown_until = time.time() + min(15.0, cooldown_seconds)
-                logger.info(
-                    "Proxy %s transient hiccup (1/2). Soft backoff 15s: %s",
+                # For transient network timeouts, allow 1 retry before hard-quarantining
+                if not is_hard_waf_or_auth and entry.consecutive_failures < 2:
+                    # Soft cooldown: brief 15s pause so next immediate request picks another proxy
+                    entry.cooldown_until = time.time() + min(15.0, cooldown_seconds)
+                    logger.info(
+                        "Proxy %s transient hiccup (1/2). Soft backoff 15s: %s",
+                        mask_proxy(proxy_url),
+                        reason,
+                    )
+                    self.save_to_redis()
+                    return
+
+                # Hard quarantine
+                entry.status = "cooldown"
+                entry.cooldown_until = time.time() + cooldown_seconds
+                logger.warning(
+                    "Quarantining proxy %s for %ds. Reason: %s",
                     mask_proxy(proxy_url),
+                    int(cooldown_seconds),
                     reason,
                 )
+                if self._persist_to_redis:
+                    try:
+                        from api.metrics import record_event
+                        record_event("proxy_quarantine", f"Proxy {mask_proxy(proxy_url)} quarantined for {int(cooldown_seconds)}s: {reason}", level="warning")
+                    except Exception:
+                        pass
+                # Sync to Redis asynchronously or in memory
                 self.save_to_redis()
-                return
-
-            # Hard quarantine
-            entry.status = "cooldown"
-            entry.cooldown_until = time.time() + cooldown_seconds
-            logger.warning(
-                "Quarantining proxy %s for %ds. Reason: %s",
-                mask_proxy(proxy_url),
-                int(cooldown_seconds),
-                reason,
-            )
-            try:
-                from api.metrics import record_event
-                record_event("proxy_quarantine", f"Proxy {mask_proxy(proxy_url)} quarantined for {int(cooldown_seconds)}s: {reason}", level="warning")
-            except Exception:
-                pass
-            # Sync to Redis asynchronously or in memory
-            self.save_to_redis()
 
     # ── Redis Persistence ─────────────────────────────────────────────
 
