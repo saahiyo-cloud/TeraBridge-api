@@ -571,6 +571,43 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(e.consecutive_failures, 2)
         self.assertAlmostEqual(e.cooldown_remaining(), 120, delta=3)
 
+    # 50. Multi-Connection Stream Proxy Wiring
+    def test_50_multi_connection_stream_proxy_wiring(self):
+        import asyncio
+        from unittest.mock import patch
+        from downloader import multi_connection_stream_generator
+
+        async def _run_test():
+            # When PROXY_DOWNLOADS is False -> proxy argument is None
+            with patch("api.config.PROXY_DOWNLOADS", False), \
+                 patch("downloader.get_outbound_proxy", return_value="http://proxy.test:8080"), \
+                 patch("httpx.AsyncClient") as mock_cl:
+                inst = mock_cl.return_value
+                inst.__aenter__.return_value = inst
+                inst.__aexit__.return_value = None
+                gen = multi_connection_stream_generator("http://test.com/file", 0, 10, {}, {})
+                try:
+                    await gen.__anext__()
+                except (StopAsyncIteration, Exception):
+                    pass
+                self.assertIsNone(mock_cl.call_args.kwargs.get("proxy"))
+
+            # When PROXY_DOWNLOADS is True -> proxy argument is configured proxy
+            with patch("api.config.PROXY_DOWNLOADS", True), \
+                 patch("downloader.get_outbound_proxy", return_value="http://proxy.test:8080"), \
+                 patch("httpx.AsyncClient") as mock_cl:
+                inst = mock_cl.return_value
+                inst.__aenter__.return_value = inst
+                inst.__aexit__.return_value = None
+                gen = multi_connection_stream_generator("http://test.com/file", 0, 10, {}, {})
+                try:
+                    await gen.__anext__()
+                except (StopAsyncIteration, Exception):
+                    pass
+                self.assertEqual(mock_cl.call_args.kwargs.get("proxy"), "http://proxy.test:8080")
+
+        asyncio.run(_run_test())
+
 
 if __name__ == "__main__":
     unittest.main()
