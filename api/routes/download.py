@@ -121,20 +121,20 @@ async def download_file_route(request: Request):
             status_code=401,
         )
 
-    share_url = f"https://1024terabox.com/s/{surl}"
+    link = request.query_params.get("url") or request.query_params.get("link") or f"https://1024terabox.com/s/{surl}"
 
     # Resolve (with cache)
-    cached_res = cache.get(share_url, "d", False)
-    if not cached_res:
+    cached_res = cache.get(link, "raw:d", False) or cache.get(link, "raw:both", False) or cache.get(link, "d", False)
+    if not cached_res or not _find_file(cached_res.get("files", []), fs_id):
         try:
-            cached_res = await resolve_link_with_retry(share_url, action="d")
+            cached_res = await resolve_link_with_retry(link, action="d")
             if cached_res.get("errno") == 0:
                 is_transcoding = any(
                     f.get("error") == "transcoding_in_progress"
                     for f in cached_res.get("files", [])
                 )
                 if not is_transcoding:
-                    cache.put(share_url, "d", False, cached_res)
+                    cache.put(link, "raw:d", False, cached_res)
         except Exception as exc:
             logger.exception("Failed to resolve download details for surl=%s: %s", surl, exc)
             return JSONResponse(
@@ -142,7 +142,7 @@ async def download_file_route(request: Request):
                 status_code=500,
             )
 
-    if cached_res.get("errno") != 0:
+    if cached_res.get("errno", 0) != 0 and cached_res.get("status") != "success":
         return JSONResponse(
             {"status": "error", "message": cached_res.get("error", "Failed to resolve share link.")},
             status_code=400,
@@ -155,19 +155,32 @@ async def download_file_route(request: Request):
             status_code=404,
         )
 
-    if target_file.get("error"):
+    dlink = target_file.get("dlink")
+    # If dlink is still a self-referencing proxy link from response_data, resolve raw upstream
+    if not dlink or "/api/download" in dlink:
+        fresh_res = await resolve_link_with_retry(link, action="d")
+        if fresh_res.get("errno") == 0:
+            cached_res = fresh_res
+            cache.put(link, "raw:d", False, cached_res)
+            target_file = _find_file(cached_res.get("files", []), fs_id)
+            dlink = target_file.get("dlink") if target_file else None
+
+    if target_file and target_file.get("error"):
         return JSONResponse(
             {"status": "error", "message": f"File resolution error: {target_file['error']}"},
             status_code=400,
         )
 
-    dlink = target_file.get("dlink")
-    filename = target_file.get("filename") or "download"
+    filename = target_file.get("filename") if target_file else "download"
     if not dlink:
         return JSONResponse(
             {"status": "error", "message": "Download link not available for this file."},
             status_code=404,
         )
+
+    from api.config import PROXY_DOWNLOADS
+    if not PROXY_DOWNLOADS:
+        return RedirectResponse(url=dlink, status_code=307)
 
     try:
         headers = {"User-Agent": UA, "Referer": "https://dm.1024terabox.com/"}

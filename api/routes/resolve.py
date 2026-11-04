@@ -239,6 +239,7 @@ def format_resolved_response(request: Request | None, res: dict, link: str) -> t
 
     response_data: dict = {
         "status": "transcoding" if is_transcoding else "success",
+        "errno": res.get("errno", 0),
         "title": res.get("title"),
         "share_id": res.get("share_id"),
         "uk": res.get("uk"),
@@ -269,10 +270,12 @@ def format_resolved_response(request: Request | None, res: dict, link: str) -> t
                         proxy_url = f"{base}/api/thumbnail?url={quoted_v}&{signed}"
                     proxied_thumbs[k] = proxy_url
 
+        encoded_link = urllib.parse.quote(link) if link else ""
+        link_param = f"&url={encoded_link}" if encoded_link else ""
         proxy_dlink = None
         if f.get("dlink") and original_fs_id and surl and request:
             signed = make_signed_params(request, surl, original_fs_id, "", kind="download")
-            proxy_dlink = f"{base}/api/download?surl={surl}&fs_id={original_fs_id}&{signed}"
+            proxy_dlink = f"{base}/api/download?surl={surl}&fs_id={original_fs_id}{link_param}&{signed}"
         else:
             proxy_dlink = f.get("dlink")
 
@@ -440,6 +443,8 @@ async def _background_transcode_poll(link: str, action: str, cache_key: str):
         if res.get("errno") == 0:
             response_data, is_transcoding = format_resolved_response(None, res, link)
             if not is_transcoding:
+                cache.put(link, f"raw:{action}", False, res)
+                cache.put(link, f"raw:{action}", True, res)
                 cache.put(link, action, False, response_data)
                 cache.put(link, action, True, response_data)
                 title = res.get("title", "Unknown Video")
@@ -596,6 +601,7 @@ async def resolve(request: Request):
             asyncio.create_task(_prewarm_quality_cache(link, res))
 
         if not is_transcoding:
+            cache.put(link, f"raw:{action}", wait_for_transcoding, res)
             cache.put(link, action, wait_for_transcoding, response_data)
             try:
                 from api.metrics import record_event
