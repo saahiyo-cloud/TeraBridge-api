@@ -343,6 +343,7 @@ def _build_master_playlist(request: Request, surl: str, ready_qualities: dict) -
 
 
 def _rewrite_m3u8(request: Request, m3u8_text: str) -> Response:
+    from api.config import REDIRECT_SEGMENTS
     base_url = request_base_url(request)
     rewritten = []
     for line in m3u8_text.splitlines():
@@ -350,9 +351,14 @@ def _rewrite_m3u8(request: Request, m3u8_text: str) -> Response:
         if not line:
             continue
         if line.startswith("http://") or line.startswith("https://"):
-            signed = make_signed_params(request, line, "", "", kind="segment")
-            proxy_seg = f"{base_url}/api/stream/segment.ts?url={urllib.parse.quote(line, safe='')}&{signed}"
-            rewritten.append(proxy_seg)
+            if REDIRECT_SEGMENTS:
+                # Direct CDN streaming: Zero server hops, zero 307 redirect latency.
+                # Video chunks are downloaded directly at full line speed from the CDN edge.
+                rewritten.append(line)
+            else:
+                signed = make_signed_params(request, line, "", "", kind="segment")
+                proxy_seg = f"{base_url}/api/stream/segment.ts?url={urllib.parse.quote(line, safe='')}&{signed}"
+                rewritten.append(proxy_seg)
         else:
             rewritten.append(line)
 
