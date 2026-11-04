@@ -121,6 +121,7 @@ async def stream_manifest(request: Request):
                         {"status": "error", "message": res.get("error", "Resolution error.")},
                         status_code=400,
                     )
+                cache.put(link, "s", wait_for_transcoding, res)
 
                 files = res.get("files", [])
                 matching_file = _pick_file(files, fs_id, file_index)
@@ -159,7 +160,7 @@ async def stream_manifest(request: Request):
                 ttl = 120 if is_transcoding else 86400
                 _save_qualities_to_cache(link, file_index, ready_qualities, ttl)
 
-            return _build_master_playlist(request, surl, ready_qualities)
+            return _build_master_playlist(request, surl, ready_qualities, link=link)
 
         # ── CASE 2: Specific quality sub-playlist ──────────────────────
         qtype = QUALITIES_MAP.get(quality)
@@ -169,14 +170,18 @@ async def stream_manifest(request: Request):
                 status_code=400,
             )
 
-        res = await resolve_link_with_retry(
-            link, action="s", wait_for_transcoding=wait_for_transcoding, quality=qtype
-        )
-        if res.get("errno") != 0:
-            return JSONResponse(
-                {"status": "error", "message": res.get("error", "Resolution error.")},
-                status_code=400,
+        # Try cache first for instant sub-playlist serving without network hops
+        res = cache.get(link, "s", wait_for_transcoding) or cache.get(link, "both", wait_for_transcoding)
+        if not res or res.get("errno") != 0:
+            res = await resolve_link_with_retry(
+                link, action="s", wait_for_transcoding=wait_for_transcoding, quality=qtype
             )
+            if res.get("errno") != 0:
+                return JSONResponse(
+                    {"status": "error", "message": res.get("error", "Resolution error.")},
+                    status_code=400,
+                )
+            cache.put(link, "s", wait_for_transcoding, res)
 
         files = res.get("files", [])
         matching_file = _pick_file(files, fs_id, file_index)
@@ -312,7 +317,7 @@ def _save_qualities_to_cache(link: str, file_index: int, ready: dict, ttl: int):
         cache.put(link, f"qualities:{file_index}", False, ready)
 
 
-def _build_master_playlist(request: Request, surl: str, ready_qualities: dict) -> Response:
+def _build_master_playlist(request: Request, surl: str, ready_qualities: dict, link: str = "") -> Response:
     base_url = request_base_url(request)
     playlist = ["#EXTM3U", "#EXT-X-VERSION:3"]
     quality_meta = [
@@ -321,13 +326,15 @@ def _build_master_playlist(request: Request, surl: str, ready_qualities: dict) -
         ("480p",  "1200000", "854x480"),
         ("360p",  "600000",  "640x360"),
     ]
+    encoded_link = urllib.parse.quote(link) if link else ""
+    link_param = f"&url={encoded_link}" if encoded_link else ""
     for qname, bandwidth, res_str in quality_meta:
         if qname in ready_qualities:
             q_fs_id = ready_qualities[qname]["fs_id"]
             signed = make_signed_params(request, surl, q_fs_id, "manifest", kind="manifest")
             stream_url = (
                 f"{base_url}/api/stream/playlist.m3u8"
-                f"?surl={surl}&fs_id={q_fs_id}&quality={qname}&{signed}"
+                f"?surl={surl}&fs_id={q_fs_id}&quality={qname}{link_param}&{signed}"
             )
             playlist.append(f"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={res_str}")
             playlist.append(stream_url)

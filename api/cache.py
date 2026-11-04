@@ -78,7 +78,15 @@ class ResponseCache:
 
     # ── Key construction ───────────────────────────────────────────────
     def make_key(self, link: str, action: str, wait: bool) -> str:
-        raw = f"{link}|{action}|{wait}"
+        canonical = link
+        try:
+            from downloader import parse_surl
+            surl = parse_surl(link)
+            if surl:
+                canonical = f"surl:{surl}"
+        except Exception:
+            pass
+        raw = f"{canonical}|{action}|{wait}"
         return hashlib.md5(raw.encode()).hexdigest()
 
     def _make_key(self, link: str, action: str, wait: bool) -> str:
