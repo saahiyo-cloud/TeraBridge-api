@@ -1286,8 +1286,17 @@ async def multi_connection_stream_generator(
                 ready_chunks[c_idx] = None
                 ready_events[c_idx].set()
 
+    proxy_to_use = None
+    try:
+        from api.config import PROXY_DOWNLOADS
+        if PROXY_DOWNLOADS:
+            proxy_to_use = get_outbound_proxy()
+    except Exception:
+        pass
+
     async with httpx.AsyncClient(
         cookies=cookies,
+        proxy=proxy_to_use,
         timeout=60.0,
         limits=httpx.Limits(max_connections=concurrency + 4, max_keepalive_connections=concurrency + 2),
     ) as client:

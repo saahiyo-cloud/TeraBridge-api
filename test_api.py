@@ -552,6 +552,25 @@ class TestTeraBridgeAPI(unittest.TestCase):
         self.assertEqual(safe_json_loads(None), {})
         self.assertEqual(safe_json_loads(b"bad bytes"), {})
 
+    # 49. Proxy Exponential Cooldown Backoff
+    def test_49_proxy_exponential_cooldown_backoff(self):
+        from api.proxy_manager import ProxyPoolManager
+
+        pool = ProxyPoolManager(persist_to_redis=False)
+        pool.set_proxies(["http://user:pass@1.2.3.4:8080"])
+
+        # 1st hard failure -> cooldown 60s
+        pool.mark_failure("http://user:pass@1.2.3.4:8080", reason="TeraBox WAF verify 400141", cooldown_seconds=60)
+        e = pool.get_entry_by_url("http://user:pass@1.2.3.4:8080")
+        self.assertIsNotNone(e)
+        self.assertEqual(e.consecutive_failures, 1)
+        self.assertAlmostEqual(e.cooldown_remaining(), 60, delta=3)
+
+        # 2nd consecutive failure -> exponential 2x backoff (120s)
+        pool.mark_failure("http://user:pass@1.2.3.4:8080", reason="TeraBox WAF verify 400141", cooldown_seconds=60)
+        self.assertEqual(e.consecutive_failures, 2)
+        self.assertAlmostEqual(e.cooldown_remaining(), 120, delta=3)
+
 
 if __name__ == "__main__":
     unittest.main()

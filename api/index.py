@@ -107,7 +107,15 @@ def get_proxy_client() -> httpx.AsyncClient:
 async def _periodic_cleanup():
     while True:
         await asyncio.sleep(300)
-        rate_limiter.cleanup()
+        try:
+            rate_limiter.cleanup()
+        except Exception:
+            pass
+        try:
+            from api.proxy_manager import proxy_manager
+            await proxy_manager.probe_quarantined_proxies()
+        except Exception:
+            pass
 
 
 # ─── ASGI lifespan ───────────────────────────────────────────────────

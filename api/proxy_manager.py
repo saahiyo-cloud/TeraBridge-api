@@ -538,23 +538,85 @@ class ProxyPoolManager:
                     self.save_to_redis()
                     return
 
-                # Hard quarantine
+                # Hard quarantine with exponential backoff on repeated failures
+                backoff_mult = min(6, 2 ** max(0, entry.consecutive_failures - 1))
+                effective_cooldown = min(1800.0, cooldown_seconds * backoff_mult)
                 entry.status = "cooldown"
-                entry.cooldown_until = time.time() + cooldown_seconds
+                entry.cooldown_until = time.time() + effective_cooldown
                 logger.warning(
-                    "Quarantining proxy %s for %ds. Reason: %s",
+                    "Quarantining proxy %s for %ds (failures=%d). Reason: %s",
                     mask_proxy(proxy_url),
-                    int(cooldown_seconds),
+                    int(effective_cooldown),
+                    entry.consecutive_failures,
                     reason,
                 )
                 if self._persist_to_redis:
                     try:
                         from api.metrics import record_event
-                        record_event("proxy_quarantine", f"Proxy {mask_proxy(proxy_url)} quarantined for {int(cooldown_seconds)}s: {reason}", level="warning")
+                        record_event(
+                            "proxy_quarantine",
+                            f"Proxy {mask_proxy(proxy_url)} quarantined for {int(effective_cooldown)}s: {reason}",
+                            level="warning",
+                        )
                     except Exception:
                         pass
                 # Sync to Redis asynchronously or in memory
                 self.save_to_redis()
+
+    async def probe_quarantined_proxies(self) -> dict[str, Any]:
+        """
+        Actively verifies proxies that are nearing or past their cooldown expiration.
+        If a proxy is unblocked by TeraBox, restores it to healthy.
+        If still blocked, extends its cooldown without impacting live user requests.
+        """
+        with self._thread_lock:
+            cooling = [
+                e for e in self._entries
+                if e.status == "cooldown" and time.time() >= (e.cooldown_until - 30.0)
+            ]
+
+        if not cooling:
+            return {"probed": 0, "restored": 0, "extended": 0}
+
+        restored = 0
+        extended = 0
+
+        async def _test_cooling_entry(entry: ProxyEntry):
+            nonlocal restored, extended
+            raw_url = entry.url
+            try:
+                # Lightweight probe using HEAD to dm.1024terabox.com/main
+                async with httpx.AsyncClient(timeout=8.0, proxy=raw_url) as client:
+                    r = await client.head("https://dm.1024terabox.com/main", follow_redirects=False)
+                    if r.status_code in (200, 301, 302):
+                        with self._thread_lock:
+                            entry.status = "healthy"
+                            entry.consecutive_failures = 0
+                            entry.last_error = None
+                        restored += 1
+                        logger.info(
+                            "Quarantined proxy %s successfully re-verified and restored to healthy",
+                            mask_proxy(raw_url),
+                        )
+                        return
+            except Exception:
+                pass
+
+            # Still blocked or failed probe -> extend cooldown
+            with self._thread_lock:
+                entry.cooldown_until = time.time() + DEFAULT_COOLDOWN_SECONDS
+                entry.last_error = "Pre-flight probe failed: TeraBox still blocking or timing out"
+            extended += 1
+            logger.info(
+                "Quarantined proxy %s failed pre-flight re-probe; cooldown extended",
+                mask_proxy(raw_url),
+            )
+
+        await asyncio.gather(*[_test_cooling_entry(e) for e in cooling], return_exceptions=True)
+        if restored > 0 or extended > 0:
+            self.save_to_redis()
+
+        return {"probed": len(cooling), "restored": restored, "extended": extended}
 
     # ── Redis Persistence ─────────────────────────────────────────────
 
@@ -581,8 +643,30 @@ class ProxyPoolManager:
                             if norm:
                                 loaded.append(ProxyEntry(url=norm, raw=item))
                     if loaded:
-                        self._entries = loaded
-                        logger.info("Loaded %d proxies from Redis pool", len(self._entries))
+                        with self._thread_lock:
+                            existing_map = {e.url: e for e in self._entries}
+                            merged: list[ProxyEntry] = []
+                            for entry in loaded:
+                                if entry.url in existing_map:
+                                    curr = existing_map[entry.url]
+                                    entry.success_count = max(entry.success_count, curr.success_count)
+                                    entry.failure_count = max(entry.failure_count, curr.failure_count)
+                                merged.append(entry)
+
+                            # Clean up removed proxy clients
+                            active_urls = {e.url for e in merged}
+                            for url, cl in list(self._clients.items()):
+                                if url not in active_urls:
+                                    try:
+                                        if not cl.is_closed:
+                                            asyncio.create_task(cl.aclose())
+                                    except Exception:
+                                        pass
+                                    self._clients.pop(url, None)
+                                    self._client_loops.pop(url, None)
+
+                            self._entries = merged
+                        logger.info("Loaded and synchronized %d proxies from Redis pool", len(self._entries))
                         return
             except Exception as exc:
                 logger.warning("Failed to load proxy pool from Redis: %s", exc)
@@ -595,7 +679,8 @@ class ProxyPoolManager:
                 if single:
                     norm = normalize_proxy(single)
                     if norm:
-                        self._entries = [ProxyEntry(url=norm, raw=single)]
+                        with self._thread_lock:
+                            self._entries = [ProxyEntry(url=norm, raw=single)]
                         logger.info("Imported single proxy from Redis: %s", mask_proxy(norm))
                         return
             except Exception:
@@ -615,7 +700,8 @@ class ProxyPoolManager:
             if single_env:
                 norm = normalize_proxy(single_env)
                 if norm:
-                    self._entries = [ProxyEntry(url=norm, raw=single_env)]
+                    with self._thread_lock:
+                        self._entries = [ProxyEntry(url=norm, raw=single_env)]
                     logger.info("Configured default proxy from env: %s", mask_proxy(norm))
 
     def save_to_redis(self) -> None:
