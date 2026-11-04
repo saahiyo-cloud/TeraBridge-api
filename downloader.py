@@ -330,13 +330,23 @@ async def resolve_share_session(surl, link):
     """
     share_url = link if "://" in link else f"https://{link}"
     parsed = urllib.parse.urlparse(share_url)
-    bases = [f"{parsed.scheme or 'https'}://{parsed.netloc}", BASE_PUBLIC, BASE_API]
+    bases = [
+        f"{parsed.scheme or 'https'}://{parsed.netloc}",
+        BASE_PUBLIC,
+        "https://1024terabox.com",
+        "https://www.1024tera.com",
+        "https://terabox.app",
+        "https://freeterabox.com",
+        "https://www.terabox.club",
+        "https://terasharelink.com",
+        BASE_API,
+    ]
     try:
         warmup = await get_session().get(
             share_url,
             headers={**HEADERS, "Referer": f"{parsed.scheme or 'https'}://{parsed.netloc}/"},
             follow_redirects=True,
-            timeout=20.0,
+            timeout=15.0,
         )
         final_base = f"{warmup.url.scheme}://{warmup.url.host}"
         bases.insert(0, final_base)
@@ -358,7 +368,7 @@ async def resolve_share_session(surl, link):
                     params=params,
                     headers={**HEADERS, "Referer": f"{base}/"},
                     follow_redirects=True,
-                    timeout=20.0,
+                    timeout=15.0,
                 )
                 data = response.json()
             except (httpx.HTTPError, ValueError):
@@ -366,9 +376,21 @@ async def resolve_share_session(surl, link):
             if data.get("errno") == 0:
                 randsk = urllib.parse.unquote(data.get("randsk", ""))
                 if randsk:
-                    for domain in (parsed.hostname, urllib.parse.urlparse(BASE_API).hostname):
+                    target_domains = {
+                        parsed.hostname,
+                        urllib.parse.urlparse(base).hostname,
+                        urllib.parse.urlparse(BASE_API).hostname,
+                        ".1024terabox.com",
+                        ".terabox.com",
+                        ".1024tera.com",
+                        ".terabox.app",
+                    }
+                    for domain in target_domains:
                         if domain:
-                            get_session().cookies.set("TSID", randsk, domain=domain, path="/")
+                            try:
+                                get_session().cookies.set("TSID", randsk, domain=domain, path="/")
+                            except Exception:
+                                pass
                 return data
     return {}
 
@@ -508,79 +530,80 @@ _LEADING_ONE_MAX_STRIPS = 4  # never strip more than this many leading '1' chars
 _VALID_SURL = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def parse_surl(url):
+def parse_surl(url: str) -> str:
     """
-    Extract and clean the shorturl key (`surl`) from a Terabox share link.
+    Extract and clean the shorturl key (`surl`) from a Terabox share link or slug.
 
     Recognized shapes:
-      - https://terabox.com/s/1ABCDEFG...        (path form)
-      - https://1024terabox.com/s/1ABCDEFG...
-      - https://terabox.com/share/list?surl=1ABCDEFG...   (query form)
-      - https://terabox.com/s/1ABCDEFG?fid=...
-      - 1ABCDEFG...                                (bare surl)
+      - https://terabox.com/s/1ABCDEFG...                  (standard path form)
+      - https://1024terabox.com/s/1ABCDEFG...              (mirror path form)
+      - https://terabox.com/share/list?surl=1ABCDEFG...    (query form)
+      - https://terabox.com/share/list?shorturl=1ABCDEFG... (query form: shorturl)
+      - https://1024tera.com/wap/share/filelist?surl=...   (wap query form)
+      - https://terabox.app/sharing/link?surl=...          (sharing link form)
+      - https://terasharelink.com/1ABCDEFG...              (single slug URL path)
+      - 1ABCDEFG...                                        (bare surl identifier)
 
     Cleaning rules:
-      1. The result must match [A-Za-z0-9_-]+. Anything else (including the
-         original URL when no marker is found) raises ValueError.
-      2. If the result is longer than 22 chars and starts with a leading run
-         of `1`s, strip up to _LEADING_ONE_MAX_STRIPS leading '1's. This matches
-         observed Terabox behavior where the URL-path form prepends a '1' to
-         a base62-ish identifier (so `/s/1ABC...` and `?surl=ABC...` resolve
-         to the same share). The strip is bounded so a malicious or malformed
-         input like '1111...1' cannot shrink to a single character.
-      3. After cleaning, the result must be at least _SURL_MIN_LEN chars.
-
-    Returns the cleaned surl string. Raises ValueError on invalid input.
+      1. Strip whitespace, zero-width characters, and query string remnants.
+      2. If surl starts with '1' and has length >= 22, strip the leading '1' to
+         match the canonical base62-ish identifier expected by TeraBox APIs.
+      3. Validate against [A-Za-z0-9_-]+ and enforce minimum length of 8 characters.
     """
     if not isinstance(url, str) or not url:
         raise ValueError("parse_surl: empty or non-string input")
 
+    cleaned_url = url.strip()
     surl = None
 
-    # Query form: ?surl=...  (must check before path form so we don't get fooled
-    # by a URL that has both `?surl=` and `/s/` in it)
-    if "surl=" in url:
-        after = url.split("surl=", 1)[1]
-        surl = after.split("&", 1)[0]
-    elif "/s/" in url:
-        after = url.split("/s/", 1)[1]
-        surl = after.split("?", 1)[0].split("#", 1)[0]
-    else:
-        # No `/s/` or `?surl=` marker found.
-        # Heuristic: a real Terabox share link is always an http(s) URL with a
-        # recognized marker. A bare identifier is one of:
-        #   - just letters/digits/underscore/hyphen (no slashes, no scheme, no dots)
-        #   - *not* starting with "http"
-        # Anything else (a URL without a marker, a path with multiple slashes,
-        # anything containing a dot in the path) is rejected.
-        stripped = url.strip()
-        if "://" in stripped or "/" in stripped or "." in stripped:
-            raise ValueError(f"parse_surl: no surl marker found in {url!r}")
-        if stripped.startswith("http"):
-            raise ValueError(f"parse_surl: malformed input {url!r}")
-        if _VALID_SURL.match(stripped) and len(stripped) >= _SURL_MIN_LEN:
+    # 1. Query parameter form: ?surl=... or ?shorturl=...
+    if "surl=" in cleaned_url or "shorturl=" in cleaned_url:
+        parsed_q = urllib.parse.urlparse(cleaned_url if "://" in cleaned_url else f"https://{cleaned_url}")
+        qs = urllib.parse.parse_qs(parsed_q.query)
+        if "surl" in qs and qs["surl"]:
+            surl = qs["surl"][0]
+        elif "shorturl" in qs and qs["shorturl"]:
+            surl = qs["shorturl"][0]
+
+    # 2. Path form: /s/...
+    if not surl and "/s/" in cleaned_url:
+        after = cleaned_url.split("/s/", 1)[1]
+        surl = after.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+
+    # 3. Single-slug path in URL: e.g. https://terasharelink.com/1ABC... or https://1024tera.com/1ABC...
+    if not surl and ("://" in cleaned_url or "/" in cleaned_url or "." in cleaned_url):
+        try:
+            parsed_u = urllib.parse.urlparse(cleaned_url if "://" in cleaned_url else f"https://{cleaned_url}")
+            path_parts = [p for p in parsed_u.path.strip("/").split("/") if p]
+            if len(path_parts) == 1 and _VALID_SURL.match(path_parts[0]) and len(path_parts[0]) >= _SURL_MIN_LEN:
+                surl = path_parts[0]
+            elif "surl" in urllib.parse.parse_qs(parsed_u.query):
+                surl = urllib.parse.parse_qs(parsed_u.query)["surl"][0]
+            elif "shorturl" in urllib.parse.parse_qs(parsed_u.query):
+                surl = urllib.parse.parse_qs(parsed_u.query)["shorturl"][0]
+        except Exception:
+            pass
+
+    # 4. Bare surl identifier (e.g. 1ABC... or ABC...)
+    if not surl:
+        stripped = cleaned_url
+        if _VALID_SURL.match(stripped) and len(stripped) >= _SURL_MIN_LEN and not stripped.startswith("http"):
             surl = stripped
 
     if not surl:
-        raise ValueError(f"parse_surl: no surl found in {url!r}")
+        raise ValueError(f"parse_surl: no surl marker found in {url!r}")
 
-    # Drop any trailing path component that may have leaked in.
-    surl = surl.rstrip("/").split("/")[-1]
+    # Drop any trailing slashes or subpaths
+    surl = surl.strip().rstrip("/").split("/")[-1]
 
     if not _VALID_SURL.match(surl):
         raise ValueError(f"parse_surl: extracted value {surl!r} contains invalid characters")
 
-    # Leading-'1' strip. Mirrors Terabox's convention of prepending a '1' to
-    # the path-form identifier (so /s/1ABC... and ?surl=ABC... resolve to the
-    # same share). Strip at most _LEADING_ONE_MAX_STRIPS leading '1' chars and
-    # only when the result is *still* at least _SURL_MIN_LEN chars long. The
-    # cap on iteration count prevents a pathological input like '1111...1'
-    # from collapsing to a single character.
-    if len(surl) > 22 and surl.startswith("1"):
-        for _ in range(_LEADING_ONE_MAX_STRIPS):
-            if not surl.startswith("1") or len(surl) - 1 < _SURL_MIN_LEN or len(surl) <= 22:
-                break
-            surl = surl[1:]
+    # Leading-'1' strip: mirrors TeraBox's convention of prepending '1' to path forms.
+    # If the surl starts with '1' and is at least 22 chars, strip the leading '1' to obtain the
+    # canonical identifier used by TeraBox /share/list and /api/shorturlinfo.
+    if len(surl) >= 22 and surl.startswith("1"):
+        surl = surl[1:]
 
     if len(surl) < _SURL_MIN_LEN:
         raise ValueError(
@@ -588,6 +611,29 @@ def parse_surl(url):
         )
 
     return surl
+
+
+async def unshorten_url(url: str, timeout: float = 8.0) -> str:
+    """Follow HTTP redirects for third-party shorteners or mirror links to determine canonical destination."""
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return url
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            r = await client.head(url)
+            final_url = str(r.url)
+            if final_url and final_url != url:
+                return final_url
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            r = await client.get(url)
+            final_url = str(r.url)
+            if final_url and final_url != url:
+                return final_url
+    except Exception:
+        pass
+    return url
 
 def show(label, r):
     print(f"\n── {label} ──")
@@ -876,22 +922,69 @@ async def _resolve_link(link, action="d", wait_for_transcoding=False, quality=No
     try:
         surl = parse_surl(link)
     except ValueError as e:
-        return {"errno": -3, "error": f"Invalid share link: {e}"}
-    list_url = (
-        f"{BASE_PUBLIC}/share/list"
-        f"?app_id=250528&shorturl={surl}&root=1&order=name&desc=0&showempty=0&web=1&page=1&num=100"
-    )
-    try:
-        r = await get_session().get(list_url)
-        share_data = r.json()
-    except Exception as e:
-        return {"errno": -2, "error": f"Failed to query share list: {e}"}
+        if link.startswith("http://") or link.startswith("https://"):
+            try:
+                unshortened = await unshorten_url(link)
+                surl = parse_surl(unshortened)
+            except Exception:
+                return {"errno": -3, "error": f"Invalid share link: {e}"}
+        else:
+            return {"errno": -3, "error": f"Invalid share link: {e}"}
+
+    # Build candidate host list: prioritize input URL domain, then mirror fallbacks
+    share_url = link if "://" in link else f"https://{link}"
+    parsed_req = urllib.parse.urlparse(share_url)
+    candidate_hosts = []
+    if parsed_req.netloc and not any(h in parsed_req.netloc for h in ("localhost", "127.0.0.1")):
+        candidate_hosts.append(f"{parsed_req.scheme or 'https'}://{parsed_req.netloc}")
+    for h in (
+        BASE_PUBLIC,
+        "https://1024terabox.com",
+        "https://www.1024tera.com",
+        "https://terabox.app",
+        "https://freeterabox.com",
+        "https://www.terabox.club",
+        "https://terasharelink.com",
+        BASE_API,
+    ):
+        if h not in candidate_hosts:
+            candidate_hosts.append(h)
+
+    # TeraBox API shorturl variants: canonical vs alternate leading-1 variant
+    surl_variants = [surl, f"1{surl}" if not surl.startswith("1") else surl[1:]]
+    share_data = {}
+    winning_surl = surl
+    last_err = None
+
+    for host in candidate_hosts:
+        for s_candidate in surl_variants:
+            list_url = (
+                f"{host}/share/list"
+                f"?app_id=250528&shorturl={s_candidate}&root=1&order=name&desc=0&showempty=0&web=1&page=1&num=100"
+            )
+            try:
+                r = await get_session().get(list_url, timeout=15.0, follow_redirects=True)
+                data = r.json()
+                if data.get("errno") == 0:
+                    share_data = data
+                    winning_surl = s_candidate
+                    break
+                else:
+                    share_data = data
+            except Exception as exc:
+                last_err = exc
+        if share_data.get("errno") == 0:
+            break
 
     if share_data.get("errno") != 0:
+        if not share_data and last_err:
+            return {"errno": -2, "error": f"Failed to query share list: {last_err}"}
         return {
-            "errno": share_data.get("errno"),
+            "errno": share_data.get("errno", -1),
             "error": f"Share link is invalid or expired (errno={share_data.get('errno')}, msg={share_data.get('errmsg', 'none')}, request_id={share_data.get('request_id', 'none')})."
         }
+
+    surl = winning_surl
 
     share_session = await resolve_share_session(surl, link)
 
