@@ -13,7 +13,7 @@ import urllib.parse
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from api.auth import check_auth
 from api.cache import cache
