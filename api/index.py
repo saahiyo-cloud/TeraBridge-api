@@ -64,6 +64,8 @@ from api.config import (
 from api.middleware import (
     ConfigRefreshMiddleware,
     AnalyticsMetricsMiddleware,
+    RequestBodyLimitMiddleware,
+    RequestTimeoutMiddleware,
     check_safe_redirect,
     set_config_loader,
 )
@@ -186,10 +188,12 @@ app = FastAPI(title="TeraBridge API", version="2.0.0", lifespan=lifespan)
 
 # ── Middleware stack ─────────────────────────────────────────────────
 # Starlette wraps middleware inside-out, so the last add_middleware() call
-# becomes the outermost layer.  We want: GZip → CORS → ConfigRefresh.
-
-app.add_middleware(AnalyticsMetricsMiddleware)
+# becomes the outermost layer. Execution order:
+# RequestBodyLimit -> RequestTimeout -> AnalyticsMetrics -> ConfigRefresh -> CORS -> GZip
 app.add_middleware(ConfigRefreshMiddleware)
+app.add_middleware(AnalyticsMetricsMiddleware)
+app.add_middleware(RequestTimeoutMiddleware)
+app.add_middleware(RequestBodyLimitMiddleware)
 
 _allow_origins = list(ALLOWED_ORIGINS) if ALLOWED_ORIGINS else ["*"]
 app.add_middleware(
@@ -261,6 +265,17 @@ def healthz():
 def ignore_browser_probes():
     """Silently answer browser/client probes without 404 spam in the logs."""
     return Response(status_code=204)
+
+
+@app.get("/metrics")
+@app.get("/api/metrics/prometheus")
+def prometheus_metrics():
+    """Prometheus exposition metrics scraping endpoint."""
+    from api.metrics import get_prometheus_metrics
+    return Response(
+        content=get_prometheus_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 def _is_admin_authorized(request: Request) -> bool:

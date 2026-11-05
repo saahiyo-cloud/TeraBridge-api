@@ -1,6 +1,7 @@
 import os
 import unittest
 import urllib.parse
+from unittest.mock import patch
 from dotenv import load_dotenv
 
 # Load local environment if .env exists
@@ -607,6 +608,100 @@ class TestTeraBridgeAPI(unittest.TestCase):
                 self.assertEqual(mock_cl.call_args.kwargs.get("proxy"), "http://proxy.test:8080")
 
         asyncio.run(_run_test())
+
+    # 51. Standard Rate Limit Headers and Non-Counting Rejections (Items 4, 11)
+    def test_51_rate_limit_headers_and_non_counting_rejections(self):
+        from api.rate_limiter import RateLimiter
+        # Create an isolated in-memory limiter with small quota
+        limiter = RateLimiter(max_requests=2, window_seconds=60, redis=None)
+        test_ip = "192.0.2.101"
+
+        self.assertTrue(limiter.is_allowed(test_ip))
+        self.assertEqual(limiter.remaining(test_ip), 1)
+
+        self.assertTrue(limiter.is_allowed(test_ip))
+        self.assertEqual(limiter.remaining(test_ip), 0)
+
+        # 3rd request: rejected
+        self.assertFalse(limiter.is_allowed(test_ip))
+        # Ensure rejected request did NOT add to the list
+        self.assertEqual(len(limiter._requests[test_ip]), 2)
+
+        # Verify headers format
+        headers = limiter.get_headers(test_ip, is_blocked=True)
+        self.assertIn("X-RateLimit-Limit", headers)
+        self.assertEqual(headers["X-RateLimit-Limit"], "2")
+        self.assertIn("X-RateLimit-Remaining", headers)
+        self.assertEqual(headers["X-RateLimit-Remaining"], "0")
+        self.assertIn("X-RateLimit-Reset", headers)
+        self.assertIn("Retry-After", headers)
+
+    # 52. Auth Failure Rate Limiting Lockout (Item 2)
+    def test_52_auth_failure_rate_limiting_lockout(self):
+        from api.rate_limiter import RateLimiter
+        limiter = RateLimiter(auth_max_failures=3, auth_lockout_seconds=60, redis=None)
+        test_ip = "192.0.2.102"
+
+        # Initially allowed
+        self.assertTrue(limiter.is_auth_allowed(test_ip))
+
+        # Record 2 failures
+        limiter.record_auth_failure(test_ip)
+        limiter.record_auth_failure(test_ip)
+        self.assertTrue(limiter.is_auth_allowed(test_ip))
+
+        # 3rd failure trips the threshold
+        limiter.record_auth_failure(test_ip)
+        self.assertFalse(limiter.is_auth_allowed(test_ip))
+
+        auth_headers = limiter.get_auth_headers(test_ip)
+        self.assertEqual(auth_headers["X-RateLimit-Remaining"], "0")
+        self.assertEqual(auth_headers["Retry-After"], "60")
+
+    # 53. Rate Limiting Enforced on Download, Thumbnail, Stream Segments (Item 1)
+    def test_53_rate_limiting_across_download_and_thumbnail(self):
+        headers = {"X-API-Key": API_KEY}
+
+        # /api/download missing params still evaluates rate limiter and validation
+        resp_dl = self.make_request("GET", "/api/download", headers=headers)
+        self.assertEqual(resp_dl.status_code, 400)
+
+        # /api/thumbnail missing params evaluates rate limiter and validation
+        resp_thumb = self.make_request("GET", "/api/thumbnail", headers=headers)
+        self.assertEqual(resp_thumb.status_code, 400)
+
+        # /api/stream/segment missing params
+        resp_seg = self.make_request("GET", "/api/stream/segment", headers=headers)
+        self.assertEqual(resp_seg.status_code, 400)
+
+    # 54. Request Body Size Limit Middleware (Item 12)
+    def test_54_request_body_size_limit_middleware_413(self):
+        headers = {
+            "X-API-Key": API_KEY,
+            "Content-Length": "10485760",  # 10 MB, exceeds default 5 MB limit
+        }
+        resp = self.make_request("POST", "/api/resolve", data=b"x", headers=headers)
+        self.assertEqual(resp.status_code, 413)
+        data = resp.json()
+        self.assertIn("Payload Too Large", data.get("message", ""))
+
+    # 55. Prometheus Metrics Endpoint (Item 13)
+    def test_55_prometheus_metrics_endpoint(self):
+        resp = self.make_request("GET", "/metrics")
+        self.assertEqual(resp.status_code, 200)
+        content = resp.text
+        self.assertIn("terabridge_requests_total", content)
+        self.assertIn("terabridge_latency_avg_ms", content)
+        self.assertIn("terabridge_uptime_seconds", content)
+
+    # 56. Multi-Worker Fallback Partitioning (Item 3)
+    def test_56_multi_worker_fallback_scaling(self):
+        from api.rate_limiter import RateLimiter
+        with patch.dict(os.environ, {"GUNICORN_WORKERS": "4"}):
+            limiter = RateLimiter(max_requests=40, redis=None)
+            self.assertEqual(limiter._worker_count, 4)
+            # 40 target RPM divided among 4 workers = 10 RPM per worker
+            self.assertEqual(limiter._get_effective_max(), 10)
 
 
 if __name__ == "__main__":

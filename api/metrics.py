@@ -23,6 +23,7 @@ logger = logging.getLogger("terabridge.metrics")
 
 REDIS_EVENTS_KEY = "terabridge:events"
 REDIS_METRICS_HASH = "terabridge:metrics_counters"
+REDIS_LATENCY_LIST = "terabridge:latency_samples"
 MAX_EVENTS_LOG = 60
 MAX_LATENCY_SAMPLES = 200
 
@@ -35,6 +36,7 @@ _local_events: collections.deque[dict[str, Any]] = collections.deque(maxlen=MAX_
 
 _pending_lock = threading.Lock()
 _pending_increments: dict[str, int] = collections.defaultdict(int)
+_pending_latency: list[float] = []
 _last_flush_time: float = 0.0
 
 
@@ -45,10 +47,11 @@ def set_metrics_start_time(st: float) -> None:
 
 def reset_metrics() -> None:
     """Reset in-memory and Redis metrics counters for a clean fresh tracking baseline."""
-    global _local_counters, _max_seen_counters, _latency_samples, _local_events, _start_time
+    global _local_counters, _max_seen_counters, _latency_samples, _local_events, _start_time, _pending_latency
     _start_time = time.time()
     with _pending_lock:
         _pending_increments.clear()
+        _pending_latency.clear()
     _local_counters.clear()
     _max_seen_counters.clear()
     _latency_samples.clear()
@@ -57,6 +60,7 @@ def reset_metrics() -> None:
         try:
             redis_client.delete(REDIS_METRICS_HASH)
             redis_client.delete(REDIS_EVENTS_KEY)
+            redis_client.delete(REDIS_LATENCY_LIST)
         except Exception as exc:
             logger.warning("Failed to reset Redis metrics: %s", exc)
 
@@ -73,16 +77,18 @@ def _exec_pipeline(pipe: Any) -> None:
 
 
 def flush_pending_metrics() -> None:
-    """Flush buffered metrics counter increments to Redis in an atomic batch."""
+    """Flush buffered metrics counter increments and latency samples to Redis in an atomic batch."""
     global _last_flush_time
     if not redis_client:
         return
 
     with _pending_lock:
-        if not _pending_increments:
+        if not _pending_increments and not _pending_latency:
             return
         to_flush = dict(_pending_increments)
+        latencies_to_flush = list(_pending_latency)
         _pending_increments.clear()
+        _pending_latency.clear()
         _last_flush_time = time.time()
 
     try:
@@ -91,17 +97,26 @@ def flush_pending_metrics() -> None:
             for k, amount in to_flush.items():
                 if amount > 0:
                     pipe.hincrby(REDIS_METRICS_HASH, k, amount)
+            for lat in latencies_to_flush:
+                pipe.lpush(REDIS_LATENCY_LIST, str(round(lat, 2)))
+            if latencies_to_flush:
+                pipe.ltrim(REDIS_LATENCY_LIST, 0, MAX_LATENCY_SAMPLES - 1)
             _exec_pipeline(pipe)
         else:
             for k, amount in to_flush.items():
                 if amount > 0:
                     redis_client.hincrby(REDIS_METRICS_HASH, k, amount)
+            for lat in latencies_to_flush:
+                redis_client.lpush(REDIS_LATENCY_LIST, str(round(lat, 2)))
+            if latencies_to_flush:
+                redis_client.ltrim(REDIS_LATENCY_LIST, 0, MAX_LATENCY_SAMPLES - 1)
     except Exception as exc:
         logger.debug("Failed to flush pending metrics to Redis: %s", exc)
         # Restore unflushed increments so counts are never dropped
         with _pending_lock:
             for k, amount in to_flush.items():
                 _pending_increments[k] += amount
+            _pending_latency.extend(latencies_to_flush)
 
 
 def record_request(path: str, method: str, status_code: int, duration_ms: float) -> None:
@@ -142,6 +157,7 @@ def record_request(path: str, method: str, status_code: int, duration_ms: float)
             _pending_increments["total"] += 1
             _pending_increments[f"route:{route_key}"] += 1
             _pending_increments[f"status:{status_group}"] += 1
+            _pending_latency.append(duration_ms)
             if _pending_increments["total"] >= 5 or (time.time() - _last_flush_time) >= 2.0:
                 should_flush = True
 
@@ -250,9 +266,25 @@ def get_analytics_summary() -> dict[str, Any]:
     if total_reqs > 0:
         success_rate = round((status_split["2xx"] / total_reqs) * 100, 1)
 
-    # Latency Stats
+    # Latency Stats (Cluster-wide via Redis when available, with local fallback)
     avg_latency_ms = 0.0
-    if _latency_samples:
+    if redis_client:
+        try:
+            samples_raw = redis_client.lrange(REDIS_LATENCY_LIST, 0, MAX_LATENCY_SAMPLES - 1)
+            if samples_raw:
+                parsed_samples = []
+                for s in samples_raw:
+                    val = s.decode("utf-8") if isinstance(s, bytes) else str(s)
+                    try:
+                        parsed_samples.append(float(val))
+                    except (ValueError, TypeError):
+                        pass
+                if parsed_samples:
+                    avg_latency_ms = round(sum(parsed_samples) / len(parsed_samples), 1)
+        except Exception as exc:
+            logger.debug("Failed to fetch latency samples from Redis: %s", exc)
+
+    if avg_latency_ms == 0.0 and _latency_samples:
         avg_latency_ms = round(sum(_latency_samples) / len(_latency_samples), 1)
 
     # 2. Redis Latency Ping
@@ -331,4 +363,42 @@ def get_analytics_summary() -> dict[str, Any]:
         "storage": storage_summary,
         "events": get_recent_events(25),
     }
+
+
+def get_prometheus_metrics() -> str:
+    """
+    Generate Prometheus exposition format for metrics scraping across all workers.
+    """
+    summary = get_analytics_summary()
+    traffic = summary.get("traffic", {})
+    routes = traffic.get("routes", {})
+    status_codes = traffic.get("status_codes", {})
+
+    lines = [
+        "# HELP terabridge_requests_total Total number of HTTP requests processed.",
+        "# TYPE terabridge_requests_total counter",
+        f'terabridge_requests_total {traffic.get("total_requests", 0)}',
+        "# HELP terabridge_requests_by_route_total Requests broken down by route category.",
+        "# TYPE terabridge_requests_by_route_total counter",
+    ]
+    for route, count in routes.items():
+        lines.append(f'terabridge_requests_by_route_total{{route="{route}"}} {count}')
+
+    lines.extend([
+        "# HELP terabridge_requests_by_status_total Requests broken down by status group.",
+        "# TYPE terabridge_requests_by_status_total counter",
+    ])
+    for status, count in status_codes.items():
+        lines.append(f'terabridge_requests_by_status_total{{status="{status}"}} {count}')
+
+    lines.extend([
+        "# HELP terabridge_latency_avg_ms Average request latency in milliseconds.",
+        "# TYPE terabridge_latency_avg_ms gauge",
+        f'terabridge_latency_avg_ms {traffic.get("avg_latency_ms", 0.0)}',
+        "# HELP terabridge_uptime_seconds Application uptime in seconds.",
+        "# TYPE terabridge_uptime_seconds gauge",
+        f'terabridge_uptime_seconds {summary.get("system", {}).get("uptime_seconds", 0)}',
+    ])
+    return "\n".join(lines) + "\n"
+
 

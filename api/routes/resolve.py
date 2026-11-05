@@ -472,14 +472,9 @@ async def _background_transcode_poll(link: str, action: str, cache_key: str):
 
 @router.api_route("/api/resolve", methods=["GET", "POST"])
 async def resolve(request: Request):
-    if not await check_auth(request):
-        return JSONResponse(
-            {"status": "error", "message": "Unauthorized: Invalid or missing API key."},
-            status_code=401,
-        )
-
     ip = client_ip(request)
 
+    # 1. IP-level Rate Limit check (evaluated before auth to prevent brute-forcing)
     if not await rate_limiter.is_allowed_async(ip):
         return JSONResponse(
             {
@@ -490,11 +485,27 @@ async def resolve(request: Request):
                 ),
             },
             status_code=429,
-            headers={
-                "Retry-After":            str(RATE_LIMIT_WINDOW),
-                "X-RateLimit-Limit":      str(RATE_LIMIT_RPM),
-                "X-RateLimit-Remaining":  str(rate_limiter.remaining(ip)),
+            headers=rate_limiter.get_headers(ip, is_blocked=True),
+        )
+
+    # 2. Check failed auth lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "Too many failed authentication attempts. Access temporarily locked.",
             },
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
+    # 3. Check authentication
+    if not await check_auth(request):
+        await rate_limiter.record_auth_failure_async(ip)
+        return JSONResponse(
+            {"status": "error", "message": "Unauthorized: Invalid or missing API key."},
+            status_code=401,
+            headers=rate_limiter.get_headers(ip),
         )
 
     # ── Parse request params ──────────────────────────────────────────
@@ -537,12 +548,11 @@ async def resolve(request: Request):
     # ── Cache hit ─────────────────────────────────────────────────────
     cached = cache.get(link, action, wait_for_transcoding)
     if cached is not None:
+        resp_headers = {"X-Cache": "HIT"}
+        resp_headers.update(rate_limiter.get_headers(ip))
         return JSONResponse(
             cached,
-            headers={
-                "X-Cache":                "HIT",
-                "X-RateLimit-Remaining":  str(rate_limiter.remaining(ip)),
-            },
+            headers=resp_headers,
         )
 
     # ── Single-flight ─────────────────────────────────────────────────
@@ -557,12 +567,11 @@ async def resolve(request: Request):
             timeout=30,
         )
         if cached is not None:
+            resp_headers = {"X-Cache": "HIT (COLLAPSED)"}
+            resp_headers.update(rate_limiter.get_headers(ip))
             return JSONResponse(
                 cached,
-                headers={
-                    "X-Cache":               "HIT (COLLAPSED)",
-                    "X-RateLimit-Remaining": str(rate_limiter.remaining(ip)),
-                },
+                headers=resp_headers,
             )
         logger.info("[SingleFlight] Wait timed out, resolving independently: %s", link)
         _acquire_resolve_lock(cache_key)
@@ -609,12 +618,11 @@ async def resolve(request: Request):
             except Exception:
                 pass
 
+        miss_headers = {"X-Cache": "MISS"}
+        miss_headers.update(rate_limiter.get_headers(ip))
         return JSONResponse(
             response_data,
-            headers={
-                "X-Cache":               "MISS",
-                "X-RateLimit-Remaining": str(rate_limiter.remaining(ip)),
-            },
+            headers=miss_headers,
         )
 
     except ValueError as exc:

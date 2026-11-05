@@ -7,19 +7,23 @@ Contains:
   - Base-URL helper for building absolute proxy URLs
   - ConfigRefreshMiddleware — periodically reloads credentials from Redis
 """
+import asyncio
 import ipaddress
+import json
 import logging
 import time
 import urllib.parse
 
 import httpx
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
 from api.config import (
     ALLOWED_STREAM_SUFFIXES,
     CONFIG_CHECK_INTERVAL,
+    MAX_REQUEST_BODY_SIZE_BYTES,
     ON_RENDER,
     ON_VERCEL,
+    REQUEST_TIMEOUT_SECONDS,
     TRUSTED_PROXY_CIDRS,
 )
 
@@ -296,4 +300,102 @@ class AnalyticsMetricsMiddleware:
                 record_request(path, method, status_code, duration_ms)
             except Exception:
                 pass
+
+
+class RequestBodyLimitMiddleware:
+    """
+    Guards the server against oversized payloads and memory exhaustion attacks.
+    Immediately rejects requests whose Content-Length or streaming body exceeds
+    MAX_REQUEST_BODY_SIZE_BYTES with 413 Payload Too Large.
+    """
+
+    def __init__(self, app, max_body_size: int = MAX_REQUEST_BODY_SIZE_BYTES):
+        self.app = app
+        self.max_body_size = max_body_size
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            content_length = headers.get(b"content-length")
+            if content_length:
+                try:
+                    if int(content_length) > self.max_body_size:
+                        limit_mb = self.max_body_size // (1024 * 1024)
+                        response = Response(
+                            content=json.dumps({
+                                "status": "error",
+                                "message": f"Payload Too Large: Request body exceeds {limit_mb} MB limit.",
+                            }),
+                            status_code=413,
+                            media_type="application/json",
+                        )
+                        await response(scope, receive, send)
+                        return
+                except (ValueError, TypeError):
+                    pass
+
+            # Count stream body chunks for chunked transfers without content-length
+            received_bytes = 0
+
+            async def wrapped_receive():
+                nonlocal received_bytes
+                message = await receive()
+                if message.get("type") == "http.request":
+                    body = message.get("body", b"")
+                    received_bytes += len(body)
+                    if received_bytes > self.max_body_size:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Payload Too Large: Request stream exceeded {self.max_body_size} bytes limit.",
+                        )
+                return message
+
+            await self.app(scope, wrapped_receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+class RequestTimeoutMiddleware:
+    """
+    Guards API routes against slowloris-style connection holding and hanging requests.
+    Cancels non-streaming API requests that exceed REQUEST_TIMEOUT_SECONDS with 504.
+    """
+
+    STREAMING_PATHS = (
+        "/api/download",
+        "/api/stream/segment",
+        "/api/stream/segment.ts",
+    )
+
+    def __init__(self, app, timeout_seconds: float = REQUEST_TIMEOUT_SECONDS):
+        self.app = app
+        self.timeout_seconds = float(timeout_seconds)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        # Streaming file chunks can take longer legitimately, exempt them
+        if any(path.startswith(sp) for sp in self.STREAMING_PATHS):
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                await self.app(scope, receive, send)
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning("[Timeout] Request to %s exceeded %.1fs timeout", path, self.timeout_seconds)
+            response = Response(
+                content=json.dumps({
+                    "status": "error",
+                    "message": f"Gateway Timeout: Request execution exceeded {int(self.timeout_seconds)}s limit.",
+                }),
+                status_code=504,
+                media_type="application/json",
+            )
+            await response(scope, receive, send)
+
 

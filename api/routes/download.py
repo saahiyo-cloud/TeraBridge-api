@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 from api.auth import check_auth
 from api.cache import cache
 from api.middleware import client_ip, validate_safe_outbound_url
+from api.rate_limiter import rate_limiter
 from api.signing import make_signed_params, verify_signature
 from downloader import UA, COOKIES_DICT, multi_connection_stream_generator, parse_surl
 from api.routes.resolve import resolve_link_with_retry
@@ -104,6 +105,24 @@ def parse_byte_range(range_header: str | None, file_size: int | None) -> tuple[i
 
 @router.api_route("/api/download", methods=["GET", "OPTIONS"])
 async def download_file_route(request: Request):
+    ip = client_ip(request)
+
+    # 1. Rate limiting check (evaluated before auth to prevent brute force)
+    if not await rate_limiter.is_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Rate limit exceeded. Try again shortly."},
+            status_code=429,
+            headers=rate_limiter.get_headers(ip, is_blocked=True),
+        )
+
+    # 2. Check auth failure lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Too many failed authentication attempts. Access temporarily locked."},
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
     surl  = request.query_params.get("surl")  or ""
     fs_id = request.query_params.get("fs_id") or ""
     sig   = request.query_params.get("sig")   or ""
@@ -116,9 +135,11 @@ async def download_file_route(request: Request):
         )
 
     if not (sig and verify_signature(surl, fs_id, "", sig, exp)) and not await check_auth(request):
+        await rate_limiter.record_auth_failure_async(ip)
         return JSONResponse(
             {"status": "error", "message": "Unauthorized: Invalid signature or API key."},
             status_code=401,
+            headers=rate_limiter.get_headers(ip),
         )
 
     link = request.query_params.get("url") or request.query_params.get("link") or f"https://1024terabox.com/s/{surl}"
@@ -295,6 +316,24 @@ async def download_file_route(request: Request):
 @router.api_route("/api/thumbnail",        methods=["GET", "OPTIONS"])
 @router.api_route("/api/stream/thumbnail", methods=["GET", "OPTIONS"])
 async def stream_thumbnail(request: Request):
+    ip = client_ip(request)
+
+    # 1. Media rate limit check (evaluated before auth to prevent brute force)
+    if not await rate_limiter.is_media_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Rate limit exceeded for thumbnail requests. Please slow down."},
+            status_code=429,
+            headers=rate_limiter.get_headers(ip, max_override=rate_limiter._media_max, is_blocked=True),
+        )
+
+    # 2. Check auth failure lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Too many failed authentication attempts. Access temporarily locked."},
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
     url       = request.query_params.get("url")       or ""
     surl      = request.query_params.get("surl")      or ""
     fs_id     = request.query_params.get("fs_id")     or ""
@@ -315,9 +354,11 @@ async def stream_thumbnail(request: Request):
     if not url:
         # Resolve via surl+fs_id
         if not (sig and verify_signature(surl, fs_id, size_type, sig, exp)) and not await check_auth(request):
+            await rate_limiter.record_auth_failure_async(ip)
             return JSONResponse(
                 {"status": "error", "message": "Unauthorized: Invalid signature or API key."},
                 status_code=401,
+                headers=rate_limiter.get_headers(ip),
             )
 
         share_url = f"https://1024terabox.com/s/{surl}"
@@ -358,9 +399,11 @@ async def stream_thumbnail(request: Request):
     else:
         # Direct URL path
         if not (sig and verify_signature(url, "", "", sig, exp)) and not await check_auth(request):
+            await rate_limiter.record_auth_failure_async(ip)
             return JSONResponse(
                 {"status": "error", "message": "Unauthorized: Invalid signature or API key."},
                 status_code=401,
+                headers=rate_limiter.get_headers(ip),
             )
         if not validate_safe_outbound_url(url):
             return JSONResponse(

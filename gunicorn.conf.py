@@ -33,13 +33,18 @@ workers = _int_env("GUNICORN_WORKERS", _default_workers)
 # Uvicorn worker class for running ASGI applications under Gunicorn
 worker_class = "uvicorn.workers.UvicornWorker"
 
-# ── Timeouts ─────────────────────────────────────────────────────────
+# ── Timeouts & Slowloris Safeguards ──────────────────────────────────
 # 300s covers full-file downloads on slow links and the 120s transcode-
 # polling worker. The graceful timeout lets in-flight requests finish
 # during rolling deploys / docker restart.
+# keepalive is set to 5s to release idle client connections quickly.
 timeout = _int_env("GUNICORN_TIMEOUT", 300)
 graceful_timeout = _int_env("GUNICORN_GRACEFUL_TIMEOUT", 120)
-keepalive = 15
+keepalive = _int_env("GUNICORN_KEEPALIVE", 5)
+
+# Limits against header/line abuse
+limit_request_line = _int_env("GUNICORN_LIMIT_REQUEST_LINE", 8190)
+limit_request_fields = _int_env("GUNICORN_LIMIT_REQUEST_FIELDS", 100)
 
 # ── Binding ──────────────────────────────────────────────────────────
 bind = "0.0.0.0:" + os.environ.get("PORT", "8000")

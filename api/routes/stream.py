@@ -61,6 +61,24 @@ def _get_active_client() -> httpx.AsyncClient:
 @router.api_route("/api/stream/manifest", methods=["GET", "OPTIONS"])
 @router.api_route("/api/stream/playlist.m3u8", methods=["GET", "OPTIONS"])
 async def stream_manifest(request: Request):
+    ip = client_ip(request)
+
+    # 1. Rate limit check (evaluated before auth to prevent brute force)
+    if not await rate_limiter.is_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Rate limit exceeded. Try again shortly."},
+            status_code=429,
+            headers=rate_limiter.get_headers(ip, is_blocked=True),
+        )
+
+    # 2. Check auth failure lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Too many failed authentication attempts. Access temporarily locked."},
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
     surl = request.query_params.get("surl") or ""
     fs_id = request.query_params.get("fs_id") or ""
     sig   = request.query_params.get("sig")  or ""
@@ -78,16 +96,11 @@ async def stream_manifest(request: Request):
         or await check_auth(request)
     )
     if not is_authorized:
+        await rate_limiter.record_auth_failure_async(ip)
         return JSONResponse(
             {"status": "error", "message": "Unauthorized: Invalid signature or authentication."},
             status_code=401,
-        )
-
-    ip = client_ip(request)
-    if not await rate_limiter.is_allowed_async(ip):
-        return JSONResponse(
-            {"status": "error", "message": "Rate limit exceeded. Try again shortly."},
-            status_code=429,
+            headers=rate_limiter.get_headers(ip),
         )
 
     if not link and surl:
@@ -206,6 +219,24 @@ async def stream_manifest(request: Request):
 @router.api_route("/api/stream/segment",    methods=["GET", "OPTIONS"])
 @router.api_route("/api/stream/segment.ts", methods=["GET", "OPTIONS"])
 async def stream_segment(request: Request):
+    ip = client_ip(request)
+
+    # 1. Media segment rate limiting (prevents hammering signed stream links)
+    if not await rate_limiter.is_media_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Rate limit exceeded for media streaming. Please slow down."},
+            status_code=429,
+            headers=rate_limiter.get_headers(ip, max_override=rate_limiter._media_max, is_blocked=True),
+        )
+
+    # 2. Check auth failure lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Too many failed authentication attempts. Access temporarily locked."},
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
     url = request.query_params.get("url") or ""
     sig = request.query_params.get("sig") or ""
     exp = request.query_params.get("exp") or ""
@@ -217,9 +248,11 @@ async def stream_segment(request: Request):
         )
 
     if not (sig and verify_signature(url, "", "", sig, exp)) and not await check_auth(request):
+        await rate_limiter.record_auth_failure_async(ip)
         return JSONResponse(
             {"status": "error", "message": "Unauthorized: Invalid signature or API key."},
             status_code=401,
+            headers=rate_limiter.get_headers(ip),
         )
 
     if not validate_safe_outbound_url(url):

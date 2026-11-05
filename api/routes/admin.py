@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from api.auth import check_admin, get_recent_auth_errors
 from api.cache import cache
 from api.config import CRON_SECRET, NOTIFICATION_WEBHOOK_URL
-from api.middleware import _is_allowed_stream_host, _is_private_or_local_host
+from api.middleware import _is_allowed_stream_host, _is_private_or_local_host, client_ip
 from api.rate_limiter import rate_limiter
 from api.redis_client import redis_client
 from api.account_pool import (
@@ -89,10 +89,30 @@ async def send_webhook_alert(message: str):
 
 @router.get("/api/stats")
 async def stats(request: Request):
+    ip = client_ip(request)
+
+    # 1. IP rate limiting (evaluated before auth to prevent brute force)
+    if not await rate_limiter.is_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Rate limit exceeded. Try again shortly."},
+            status_code=429,
+            headers=rate_limiter.get_headers(ip, is_blocked=True),
+        )
+
+    # 2. Check auth failure lockout
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return JSONResponse(
+            {"status": "error", "message": "Too many failed authentication attempts. Access temporarily locked."},
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
     if not await check_admin(request):
+        await rate_limiter.record_auth_failure_async(ip)
         return JSONResponse(
             {"status": "error", "message": "Unauthorized: Admin API key required."},
             status_code=401,
+            headers=rate_limiter.get_headers(ip),
         )
 
     uptime = int(time.time() - _start_time)
@@ -284,18 +304,14 @@ async def admin_config(request: Request):
             status_code=401,
         )
 
-    if not redis_client:
-        return JSONResponse(
-            {
-                "status": "error",
-                "message": "Redis client not configured. Config cannot be updated dynamically.",
-            },
-            status_code=400,
-        )
-
     if request.method == "POST":
         return await _handle_config_post(request)
     elif request.method == "DELETE":
+        if not redis_client:
+            return JSONResponse(
+                {"status": "error", "message": "Redis client not configured. Accounts cannot be updated dynamically."},
+                status_code=400,
+            )
         return await _handle_config_delete(request)
 
     # GET — return masked pool summary
@@ -369,6 +385,15 @@ async def _handle_config_post(request: Request):
                 "outbound_proxy": mask_proxy_url(get_outbound_proxy()),
                 "proxy_pool": proxy_manager.get_summary(),
             }
+
+    if not redis_client:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "Redis client not configured. Accounts cannot be updated dynamically.",
+            },
+            status_code=400,
+        )
 
     from api.routes.resolve import get_active_account_id
     account_id = data.get("account_id") or get_active_account_id() or "account_1"
@@ -555,6 +580,18 @@ async def _handle_config_delete(request: Request):
 
 
 async def _handle_config_get():
+    from api.proxy_manager import proxy_manager
+    proxy_summary = proxy_manager.get_summary()
+
+    if not redis_client:
+        return {
+            "status": "success",
+            "proxy_pool": proxy_summary,
+            "accounts_pool": {},
+            "active_account_id": None,
+            "pool_size": 0,
+        }
+
     try:
         active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)
         if isinstance(active_id, bytes):

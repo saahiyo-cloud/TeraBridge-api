@@ -56,8 +56,15 @@ CACHE_THUMBNAIL_TTL   = _get_int("CACHE_THUMBNAIL_TTL", 86400)
 CACHE_DASHBOARD_TTL   = _get_int("CACHE_DASHBOARD_TTL", 60)
 
 # ─── Rate limiting ────────────────────────────────────────────────────
-RATE_LIMIT_RPM    = _get_int("RATE_LIMIT_RPM", 30)
-RATE_LIMIT_WINDOW = _get_int("RATE_LIMIT_WINDOW", 60)  # seconds
+RATE_LIMIT_RPM        = _get_int("RATE_LIMIT_RPM", 30)
+RATE_LIMIT_WINDOW     = _get_int("RATE_LIMIT_WINDOW", 60)  # seconds
+AUTH_RATE_LIMIT_RPM   = _get_int("AUTH_RATE_LIMIT_RPM", 10)  # max failed auth attempts before lockout
+AUTH_LOCKOUT_SECONDS  = _get_int("AUTH_LOCKOUT_SECONDS", 60)  # lockout duration for failed auth
+RATE_LIMIT_MEDIA_RPM  = _get_int("RATE_LIMIT_MEDIA_RPM", 180)  # allowance for stream segments / thumbnails
+
+# ─── Request limits & Timeouts ───────────────────────────────────────
+MAX_REQUEST_BODY_SIZE_BYTES = _get_int("MAX_REQUEST_BODY_SIZE_BYTES", 5 * 1024 * 1024)  # 5 MB
+REQUEST_TIMEOUT_SECONDS     = _get_int("REQUEST_TIMEOUT_SECONDS", 60)  # 60s max per API request
 
 # ─── HMAC signature TTLs (seconds) ───────────────────────────────────
 TIERED_SIGNATURE_TTLS = {
