@@ -270,6 +270,11 @@ class AnalyticsMetricsMiddleware:
     """
     Lightweight ASGI middleware that tracks request volume, route distribution,
     HTTP status codes, and latency in api.metrics.
+
+    Must sit outside RequestTimeoutMiddleware and RequestBodyLimitMiddleware so
+    the 504 / 413 responses they send pass through ``send_wrapper``. An
+    exception that escapes before any response started is recorded as 500,
+    because Starlette's ServerErrorMiddleware (outermost) will answer with 500.
     """
 
     def __init__(self, app):
@@ -281,7 +286,7 @@ class AnalyticsMetricsMiddleware:
             return
 
         start_time = time.time()
-        status_code = 200
+        status_code = None
 
         async def send_wrapper(message):
             nonlocal status_code
@@ -291,7 +296,14 @@ class AnalyticsMetricsMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
+        except Exception:
+            if status_code is None:
+                status_code = 500
+            raise
         finally:
+            if status_code is None:
+                # Cancelled / disconnected before a response was started.
+                status_code = 499
             path = scope.get("path", "")
             method = scope.get("method", "GET")
             duration_ms = (time.time() - start_time) * 1000.0
@@ -366,6 +378,7 @@ class RequestTimeoutMiddleware:
         "/api/download",
         "/api/stream/segment",
         "/api/stream/segment.ts",
+        "/api/admin/cloudvids/stream",
     )
 
     def __init__(self, app, timeout_seconds: float = REQUEST_TIMEOUT_SECONDS):

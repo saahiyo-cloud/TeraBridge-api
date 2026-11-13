@@ -127,10 +127,33 @@ async def stats(request: Request):
         try:
             status_data = redis_client.hgetall("terabridge:status")
             if status_data:
+                # Fields written by /api/cron/validate: status, last_checked,
+                # checked_count, invalidated_count.
+                status_data = {
+                    (k.decode("utf-8") if isinstance(k, bytes) else str(k)):
+                    (v.decode("utf-8") if isinstance(v, bytes) else v)
+                    for k, v in status_data.items()
+                }
+
+                def _int_or_none(v):
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return None
+
+                checked = _int_or_none(status_data.get("checked_count"))
+                invalidated = _int_or_none(status_data.get("invalidated_count"))
+                cron_status = status_data.get("status") or "unknown"
+                if checked is not None and invalidated is not None:
+                    message = f"Last cron check: {checked} account(s) checked, {invalidated} invalidated."
+                else:
+                    message = None
                 session_health = {
-                    "status": "healthy" if status_data.get("cookie_valid") == "true" else "unhealthy",
-                    "last_checked_timestamp": status_data.get("last_checked"),
-                    "message": status_data.get("message"),
+                    "status": cron_status,
+                    "last_checked_timestamp": _int_or_none(status_data.get("last_checked")),
+                    "checked_count": checked,
+                    "invalidated_count": invalidated,
+                    "message": message,
                 }
         except Exception:
             pass
@@ -173,7 +196,11 @@ async def admin_reset_metrics(request: Request):
         )
     from api.metrics import reset_metrics, record_event
     reset_metrics()
-    record_event("metrics_reset", "success", "Telemetry and traffic counters reset to fresh baseline by admin")
+    record_event(
+        "metrics_reset",
+        "Telemetry and traffic counters reset to fresh baseline by admin",
+        level="success",
+    )
     return {"status": "success", "message": "Telemetry metrics reset successfully"}
 
 
@@ -190,12 +217,11 @@ async def test_all_proxies(request: Request):
     from api.metrics import record_event
 
     results = []
-    summary = proxy_manager.get_summary()
-    proxies = summary.get("proxies", [])
+    # Unmasked URLs stay server-side; responses only carry the masked form.
+    proxies = proxy_manager.get_proxy_urls()
 
-    async def _probe(p):
-        raw_url = p.get("raw_url")
-        masked = p.get("url") or mask_proxy(raw_url)
+    async def _probe(raw_url):
+        masked = mask_proxy(raw_url)
         t0 = time.time()
         try:
             async with httpx.AsyncClient(timeout=10.0, proxy=raw_url) as client:
@@ -318,6 +344,20 @@ async def admin_config(request: Request):
     return await _handle_config_get()
 
 
+# Id of the card synthesised from TERABOX_COOKIE when no pool account matches it.
+ENV_ACCOUNT_ID = "default_env"
+
+
+def _is_synthetic_env_account(account_id: str | None) -> bool:
+    """True when ``account_id`` is the synthesised .env card, not a stored pool account."""
+    if account_id != ENV_ACCOUNT_ID:
+        return False
+    try:
+        return not redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
+    except Exception:
+        return True
+
+
 async def _handle_config_post(request: Request):
     from api.account_manager import load_config_from_redis
 
@@ -398,10 +438,47 @@ async def _handle_config_post(request: Request):
     from api.routes.resolve import get_active_account_id
     account_id = data.get("account_id") or get_active_account_id() or "account_1"
 
+    if data.get("action") in ("activate", "verify") and _is_synthetic_env_account(account_id):
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": (
+                    "The .env account is not stored in the Redis pool, so it cannot be "
+                    "activated or re-tested here. It is used automatically when no pool "
+                    "account is healthy. Add it as a pool account to manage it."
+                ),
+            },
+            status_code=400,
+        )
+
     # Option to simply activate an existing account
     if data.get("action") == "activate":
+        existing_raw = redis_client.hget(ACCOUNTS_HASH_KEY, account_id)
+        if not existing_raw:
+            return JSONResponse({"status": "error", "message": f"Account '{account_id}' not found."}, status_code=404)
+        acc_data = safe_json_loads(existing_raw)
+        # Same rule as load_config_from_redis, which rotates away from any
+        # account whose status is not exactly "healthy".
+        if acc_data.get("status") != "healthy":
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "message": f"Account '{account_id}' is marked {acc_data.get('status') or 'without a status'}; re-test it before activating.",
+                },
+                status_code=409,
+            )
         redis_client.set(ACTIVE_ACCOUNT_KEY, account_id)
         load_config_from_redis()
+        actual_id = get_active_account_id()
+        if actual_id != account_id:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "message": f"Account '{account_id}' could not be activated; active account is '{actual_id}'.",
+                    "active_account_id": actual_id,
+                },
+                status_code=409,
+            )
         return {
             "status": "success",
             "message": f"Account '{account_id}' set as active account.",
@@ -558,7 +635,18 @@ async def _handle_config_delete(request: Request):
     if not account_id:
         return JSONResponse({"status": "error", "message": "Missing 'account_id' to delete."}, status_code=400)
 
+    if _is_synthetic_env_account(account_id):
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "The .env account comes from TERABOX_COOKIE and cannot be deleted here. Remove it from the environment instead.",
+            },
+            status_code=400,
+        )
+
     try:
+        if not redis_client.hget(ACCOUNTS_HASH_KEY, account_id):
+            return JSONResponse({"status": "error", "message": f"Account '{account_id}' not found."}, status_code=404)
         redis_client.hdel(ACCOUNTS_HASH_KEY, account_id)
         cache.invalidate_dashboard(account_id)
 
@@ -645,8 +733,10 @@ async def _handle_config_get():
 
         # If .env has credentials but no account in Redis matches it, include it as default_env
         if env_cookie and not has_env_account_match:
-            pool_summary["default_env"] = {
+            pool_summary[ENV_ACCOUNT_ID] = {
                 "is_env_account": True,
+                # Not stored in Redis: activate / re-test / delete do not apply.
+                "synthetic": True,
                 "status": "healthy",
                 "cookie": _mask("cookie", env_cookie),
                 "bds_token": _mask("bds_token", os.environ.get("TERABOX_BDSTOKEN", "")),
@@ -991,6 +1081,132 @@ async def list_cloudvids(request: Request):
             return res
     except Exception as exc:
         return JSONResponse({"status": "error", "message": f"List directory failed: {exc}"}, status_code=500)
+
+
+# ─── Dashboard preview player ─────────────────────────────────────────
+# The <video> element cannot send the X-API-Key header, so the dashboard first
+# asks (with the header) for a short-lived HMAC-signed URL, then plays that URL.
+# The stream route proxies the file bytes from the account's own storage
+# (filemetas dlink), passing Range through so the browser can seek.
+
+_PREVIEW_SIG_SCOPE = "admin_preview"
+
+
+@router.get("/api/admin/cloudvids/preview_url")
+async def cloudvids_preview_url(request: Request):
+    if not await check_admin(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized: Admin API key required."}, status_code=401)
+
+    fs_id = (request.query_params.get("fs_id") or "").strip()
+    account_id = request.query_params.get("account_id") or "active"
+    if not fs_id.isdigit():
+        return JSONResponse({"status": "error", "message": "Missing or invalid 'fs_id'."}, status_code=400)
+
+    signed = make_signed_params(request, fs_id, account_id, _PREVIEW_SIG_SCOPE, kind="download")
+    if not signed:
+        return JSONResponse(
+            {"status": "error", "message": "URL signing is disabled (no HMAC_SECRET/API_KEY); preview unavailable."},
+            status_code=503,
+        )
+    qs = urllib.parse.urlencode({"fs_id": fs_id, "account_id": account_id})
+    return {"status": "success", "url": f"/api/admin/cloudvids/stream?{qs}&{signed}"}
+
+
+@router.get("/api/admin/cloudvids/stream")
+async def cloudvids_stream(request: Request):
+    import mimetypes
+    from fastapi.responses import StreamingResponse
+    from api.middleware import check_safe_redirect, validate_safe_outbound_url
+    from api.signing import verify_signature
+
+    fs_id = (request.query_params.get("fs_id") or "").strip()
+    account_id = request.query_params.get("account_id") or "active"
+    sig = request.query_params.get("sig") or ""
+    exp = request.query_params.get("exp") or ""
+
+    if not fs_id.isdigit():
+        return JSONResponse({"status": "error", "message": "Missing or invalid 'fs_id'."}, status_code=400)
+
+    signed_ok = bool(sig and exp and verify_signature(fs_id, account_id, _PREVIEW_SIG_SCOPE, sig, exp))
+    if not signed_ok and not await check_admin(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized: invalid or expired preview signature."}, status_code=401)
+
+    cookies_dict, bds, _ = await _get_account_credentials(account_id if account_id != "active" else None)
+    headers = {"User-Agent": UA, "Referer": "https://dm.1024terabox.com/"}
+
+    try:
+        async with httpx.AsyncClient(headers=headers, cookies=cookies_dict, follow_redirects=True, timeout=20.0) as meta_client:
+            encoded_fsids = urllib.parse.quote(json.dumps([int(fs_id)]))
+            metas_url = f"{BASE_API}/api/filemetas?{qp()}&fsids={encoded_fsids}&dlink=1&thumb=0&bdstoken={bds}"
+            mr = await meta_client.get(metas_url)
+            metas = mr.json()
+    except Exception as exc:
+        return JSONResponse({"status": "error", "message": f"File lookup failed: {exc}"}, status_code=502)
+
+    if metas.get("errno") != 0:
+        return JSONResponse(
+            {"status": "error", "message": metas.get("errmsg") or "File lookup failed.", "errno": metas.get("errno")},
+            status_code=400,
+        )
+    entries = metas.get("list") or metas.get("info") or []
+    entry = next((e for e in entries if str(e.get("fs_id")) == fs_id), None)
+    if not entry or not entry.get("dlink"):
+        return JSONResponse({"status": "error", "message": "File not found or no download link available."}, status_code=404)
+    file_path = entry.get("path") or ""
+    if not file_path.startswith("/cloudvids"):
+        return JSONResponse({"status": "error", "message": "Only files under /cloudvids can be previewed."}, status_code=403)
+    dlink = entry["dlink"]
+    if not validate_safe_outbound_url(dlink):
+        return JSONResponse({"status": "error", "message": "Upstream link host not allowed."}, status_code=502)
+
+    filename = entry.get("server_filename") or os.path.basename(file_path) or "video"
+    up_headers = dict(headers)
+    range_header = request.headers.get("Range")
+    if range_header:
+        up_headers["Range"] = range_header
+
+    client = httpx.AsyncClient(
+        cookies=cookies_dict,
+        follow_redirects=True,
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        event_hooks={"response": [check_safe_redirect]},
+    )
+    try:
+        req_ctx = client.stream("GET", dlink, headers=up_headers)
+        upstream = await req_ctx.__aenter__()
+    except Exception as exc:
+        await client.aclose()
+        return JSONResponse({"status": "error", "message": f"Upstream stream failed: {exc}"}, status_code=502)
+
+    if upstream.status_code not in (200, 206):
+        status = upstream.status_code
+        await req_ctx.__aexit__(None, None, None)
+        await client.aclose()
+        return JSONResponse({"status": "error", "message": f"Upstream returned HTTP {status}."}, status_code=502)
+
+    resp_headers = {}
+    for key in ("Content-Length", "Content-Range", "Accept-Ranges"):
+        if key in upstream.headers:
+            resp_headers[key] = upstream.headers[key]
+    resp_headers.setdefault("Accept-Ranges", "bytes")
+    upstream_ct = upstream.headers.get("Content-Type", "")
+    guessed_ct = mimetypes.guess_type(filename)[0]
+    if guessed_ct and (not upstream_ct or upstream_ct.startswith(("application/octet-stream", "binary/"))):
+        resp_headers["Content-Type"] = guessed_ct
+    else:
+        resp_headers["Content-Type"] = upstream_ct or "application/octet-stream"
+    resp_headers["Content-Disposition"] = f"inline; filename*=UTF-8''{urllib.parse.quote(filename)}"
+    resp_headers["Cache-Control"] = "private, no-store"
+
+    async def _body():
+        try:
+            async for chunk in upstream.aiter_bytes(chunk_size=262144):
+                yield chunk
+        finally:
+            await req_ctx.__aexit__(None, None, None)
+            await client.aclose()
+
+    return StreamingResponse(_body(), status_code=upstream.status_code, headers=resp_headers)
 
 
 @router.delete("/api/admin/cloudvids")

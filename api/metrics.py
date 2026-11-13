@@ -28,7 +28,8 @@ MAX_EVENTS_LOG = 60
 MAX_LATENCY_SAMPLES = 200
 
 # ── In-Memory Ring Buffers & Counters ─────────────────────────────────
-_start_time = time.time()
+_start_time = time.time()        # process start; never changed by a counter reset
+_counters_since = _start_time    # when traffic counters were last reset on this worker
 _local_counters: dict[str, int] = collections.defaultdict(int)
 _max_seen_counters: dict[str, int] = collections.defaultdict(int)
 _latency_samples: collections.deque[float] = collections.deque(maxlen=MAX_LATENCY_SAMPLES)
@@ -41,14 +42,18 @@ _last_flush_time: float = 0.0
 
 
 def set_metrics_start_time(st: float) -> None:
-    global _start_time
+    global _start_time, _counters_since
     _start_time = st
+    _counters_since = st
 
 
 def reset_metrics() -> None:
-    """Reset in-memory and Redis metrics counters for a clean fresh tracking baseline."""
-    global _local_counters, _max_seen_counters, _latency_samples, _local_events, _start_time, _pending_latency
-    _start_time = time.time()
+    """Reset in-memory and Redis metrics counters for a clean fresh tracking baseline.
+
+    Uptime is not affected: only the "counters since" timestamp moves.
+    """
+    global _counters_since
+    _counters_since = time.time()
     with _pending_lock:
         _pending_increments.clear()
         _pending_latency.clear()
@@ -261,10 +266,12 @@ def get_analytics_summary() -> dict[str, Any]:
         "5xx": traffic_counters.get("status:5xx", 0),
     }
 
-    success_rate = 100.0
-    non_2xx = status_split["4xx"] + status_split["5xx"]
+    # Share of requests that did not end in a 4xx/5xx (2xx and 3xx count as OK).
+    # None when nothing has been recorded yet, so the UI can show "no data".
+    success_rate = None
     if total_reqs > 0:
-        success_rate = round((status_split["2xx"] / total_reqs) * 100, 1)
+        ok = status_split["2xx"] + status_split["3xx"]
+        success_rate = round((ok / total_reqs) * 100, 1)
 
     # Latency Stats (Cluster-wide via Redis when available, with local fallback)
     avg_latency_ms = 0.0
@@ -310,7 +317,9 @@ def get_analytics_summary() -> dict[str, Any]:
 
     # 4. Accounts & Aggregated Storage Summary
     accounts_summary = {"total": 0, "healthy": 0, "active_id": None}
-    storage_summary = {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "used_percent": 0.0}
+    # "available" is False when no quota for the active account is cached,
+    # so the dashboard can show "unknown" instead of zeros.
+    storage_summary = {"available": False, "total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "used_percent": 0.0}
     try:
         from api.account_pool import get_all_accounts, ACTIVE_ACCOUNT_KEY
         if redis_client:
@@ -327,6 +336,7 @@ def get_analytics_summary() -> dict[str, Any]:
         quota_data = cache.get_dashboard("quota:active")
         if quota_data and isinstance(quota_data, dict):
             storage_summary = {
+                "available": True,
                 "total_gb": quota_data.get("total_gb", 0.0),
                 "used_gb": quota_data.get("used_gb", 0.0),
                 "free_gb": quota_data.get("free_gb", 0.0),
@@ -345,6 +355,7 @@ def get_analytics_summary() -> dict[str, Any]:
         "system": {
             "uptime_seconds": uptime,
             "start_time": int(_start_time),
+            "counters_since": int(_counters_since),
             "redis": redis_info,
             "platform": "InstaCloud Edge Container",
             "runtime": "Python 3.12 (ASGI FastApi)",

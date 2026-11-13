@@ -210,9 +210,9 @@
         <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">System Status</span>
-            <span class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/25">
-              <span class="w-1.5 h-1.5 rounded-full bg-[#30D158] animate-subtle"></span>
-              ONLINE
+            <span id="statSystemBadge" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-white/[0.06] text-white/50 border border-white/[0.12]">
+              <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+              <span id="statSystemBadgeText">CHECKING</span>
             </span>
           </div>
           <div class="my-3">
@@ -221,7 +221,7 @@
           </div>
           <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
             <span>Redis Latency:</span>
-            <span id="statRedisPing" class="text-[#30D158] font-semibold">Connected (~2ms)</span>
+            <span id="statRedisPing" class="text-white/50 font-semibold">--</span>
           </div>
         </div>
 
@@ -229,7 +229,7 @@
         <div class="apple-card p-5 flex flex-col justify-between">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-semibold text-white/50 uppercase tracking-wider">Total Traffic</span>
-            <span id="statSuccessRate" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/25 font-mono">100% OK</span>
+            <span id="statSuccessRate" class="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A84FF]/15 text-[#0A84FF] border border-[#0A84FF]/25 font-mono">--% OK</span>
           </div>
           <div class="my-3">
             <div id="statTotalRequests" class="text-2xl font-semibold tracking-tight font-mono text-white">0</div>
@@ -268,7 +268,7 @@
             <p class="text-[11px] text-white/45 mt-0.5">Healthy Proxies / Accounts</p>
           </div>
           <div class="pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[11px] font-mono text-white/60">
-            <span>Pool Storage:</span>
+            <span>Active Acct Storage:</span>
             <span id="statFleetStorage" class="text-[#64D2FF] font-semibold">-- GB</span>
           </div>
         </div>
@@ -1037,7 +1037,8 @@
         if (res.ok && data.status === 'success') {
           showToast(`Deleted ${pathsList.length} file(s) successfully!`);
           pathsList.forEach(p => selectedPaths.delete(p));
-          loadAll();
+          // Bypass the 60s dashboard cache (other workers may still hold it in memory).
+          loadAll(true);
         } else {
           showToast(data.message || 'Delete failed', true);
         }
@@ -1150,21 +1151,73 @@
 
     let proxyProbeResultsMap = {};
 
+    const SYSTEM_BADGE_STYLES = {
+      online:  { text: 'ONLINE',       badge: 'bg-[#30D158]/15 text-[#30D158] border-[#30D158]/25', dot: 'bg-[#30D158] animate-subtle' },
+      unauth:  { text: 'UNAUTHORIZED', badge: 'bg-[#FF9F0A]/15 text-[#FF9F0A] border-[#FF9F0A]/25', dot: 'bg-[#FF9F0A]' },
+      error:   { text: 'API ERROR',    badge: 'bg-[#FF453A]/15 text-[#FF453A] border-[#FF453A]/25', dot: 'bg-[#FF453A]' },
+      offline: { text: 'OFFLINE',      badge: 'bg-[#FF453A]/15 text-[#FF453A] border-[#FF453A]/25', dot: 'bg-[#FF453A] animate-pulse' },
+    };
+
+    function setSystemBadge(state, detail = '') {
+      const badge = document.getElementById('statSystemBadge');
+      const text = document.getElementById('statSystemBadgeText');
+      const style = SYSTEM_BADGE_STYLES[state] || SYSTEM_BADGE_STYLES.error;
+      if (!badge || !text) return;
+      badge.className = `flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${style.badge}`;
+      const dot = badge.querySelector('span');
+      if (dot && dot !== text) dot.className = `w-1.5 h-1.5 rounded-full ${style.dot}`;
+      text.textContent = detail ? `${style.text} (${detail})` : style.text;
+    }
+
+    function renderRedisStatus(redis) {
+      const redisEl = document.getElementById('statRedisPing');
+      if (!redisEl) return;
+      const status = redis?.status;
+      if (status === 'connected') {
+        const lat = redis.latency_ms;
+        redisEl.textContent = (lat !== null && lat !== undefined) ? `Connected (${lat}ms)` : 'Connected';
+        redisEl.className = 'text-[#30D158] font-semibold';
+      } else if (status === 'disabled') {
+        redisEl.textContent = 'Disabled (in-memory)';
+        redisEl.className = 'text-white/50 font-semibold';
+      } else if (status === 'error') {
+        redisEl.textContent = 'Error';
+        redisEl.title = redis.error || '';
+        redisEl.className = 'text-[#FF453A] font-semibold';
+      } else {
+        redisEl.textContent = 'Unknown';
+        redisEl.className = 'text-white/50 font-semibold';
+      }
+    }
+
     async function loadAnalytics(isSilent = false) {
+      let res;
       try {
-        const res = await fetch('/api/admin/analytics', { headers: getAuthHeaders() });
-        if (!res.ok) return;
+        res = await fetch('/api/admin/analytics', { headers: getAuthHeaders() });
+      } catch (e) {
+        setSystemBadge('offline');
+        renderRedisStatus(null);
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        setSystemBadge('unauth');
+        renderRedisStatus(null);
+        return;
+      }
+      if (!res.ok) {
+        setSystemBadge('error', `HTTP ${res.status}`);
+        renderRedisStatus(null);
+        return;
+      }
+      try {
         const data = await res.json();
+        setSystemBadge(data.status === 'online' ? 'online' : 'error');
 
         // 1. System Health
         const uptimeEl = document.getElementById('statUptime');
         if (uptimeEl) uptimeEl.textContent = formatUptime(data.system?.uptime_seconds);
 
-        const redisEl = document.getElementById('statRedisPing');
-        if (redisEl) {
-          const lat = data.system?.redis?.latency_ms;
-          redisEl.textContent = lat !== null ? `Connected (${lat}ms)` : 'Connected';
-        }
+        renderRedisStatus(data.system?.redis);
 
         // 2. Traffic
         const traf = data.traffic || {};
@@ -1173,15 +1226,17 @@
 
         const succRateEl = document.getElementById('statSuccessRate');
         if (succRateEl) {
-          const sRate = traf.success_rate_percent ?? 100;
-          succRateEl.textContent = `${sRate}% OK`;
-          succRateEl.className = sRate >= 95 
+          const sRate = traf.success_rate_percent;
+          succRateEl.textContent = (sRate === null || sRate === undefined) ? 'No data' : `${sRate}% OK`;
+          succRateEl.className = (sRate === null || sRate === undefined)
+            ? 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-white/[0.06] text-white/50 border border-white/[0.12]'
+            : sRate >= 95 
             ? 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30'
             : 'px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30';
         }
 
         const avgLatEl = document.getElementById('statAvgLatency');
-        if (avgLatEl) avgLatEl.textContent = traf.avg_latency_ms ? `${traf.avg_latency_ms} ms` : '< 50 ms';
+        if (avgLatEl) avgLatEl.textContent = traf.avg_latency_ms ? `${traf.avg_latency_ms} ms` : '-- (no samples)';
 
         // 3. Cache
         const cacheLinks = data.cache?.links || {};
@@ -1208,7 +1263,10 @@
         const fleetStorage = document.getElementById('statFleetStorage');
         if (fleetStorage) {
           const stor = data.storage || {};
-          fleetStorage.textContent = stor.used_gb ? `${stor.used_gb} GB (${stor.used_percent}%)` : 'Healthy';
+          fleetStorage.textContent = stor.available
+            ? `${stor.used_gb} / ${stor.total_gb} GB (${stor.used_percent}%)`
+            : 'Unknown (open Files tab)';
+          fleetStorage.title = stor.available ? '' : 'No cached quota for the active account in the last 60s';
         }
 
         // 5. Route Progress Bars
@@ -1255,7 +1313,7 @@
           } else {
             proxyFleetContainer.innerHTML = proxies.proxies.map(p => {
               const isCooling = p.status === 'cooldown';
-              const probe = proxyProbeResultsMap[p.raw_url] || proxyProbeResultsMap[p.url];
+              const probe = proxyProbeResultsMap[p.url];
               const latBadge = probe ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-mono ${probe.status === 'healthy' ? 'text-[#30D158] bg-[#30D158]/10 border border-[#30D158]/20' : 'text-[#FF453A] bg-[#FF453A]/10 border border-[#FF453A]/20'}">${probe.latency_ms}ms</span>` : '';
 
               const badge = isCooling
@@ -1291,7 +1349,8 @@
         renderEventsFeed();
 
       } catch (e) {
-        if (!isSilent) loggerError('Failed to load analytics: ' + e.message);
+        setSystemBadge('error', 'bad response');
+        if (!isSilent) console.error('Failed to load analytics: ' + e.message);
       }
     }
 
@@ -1542,7 +1601,7 @@
                   </div>
                   <div class="flex items-center gap-2">
                     <span class="text-[11px] text-[#5E5CE6]/90 font-mono">Status: ${envAcc.status || 'healthy'}</span>
-                    ${envId !== activeAccId ? `<button onclick="activateAccount('${escapeQuotes(envId)}')" class="px-3 py-1 rounded-xl bg-[#5E5CE6]/20 hover:bg-[#5E5CE6]/30 text-[#5E5CE6] border border-[#5E5CE6]/40 text-[11px] font-semibold transition">Activate .ENV Account</button>` : '<span class="text-[10px] font-mono font-semibold text-[#30D158] uppercase bg-[#30D158]/15 px-2.5 py-0.5 rounded-full border border-[#30D158]/30">Currently Active</span>'}
+                    ${envAcc.synthetic ? '<span class="text-[10px] font-mono text-white/50" title="Not stored in Redis. Used automatically when no pool account is healthy.">Fallback only (not in pool)</span>' : envId !== activeAccId ? `<button onclick="activateAccount('${escapeQuotes(envId)}')" class="px-3 py-1 rounded-xl bg-[#5E5CE6]/20 hover:bg-[#5E5CE6]/30 text-[#5E5CE6] border border-[#5E5CE6]/40 text-[11px] font-semibold transition">Activate .ENV Account</button>` : '<span class="text-[10px] font-mono font-semibold text-[#30D158] uppercase bg-[#30D158]/15 px-2.5 py-0.5 rounded-full border border-[#30D158]/30">Currently Active</span>'}
                   </div>
                 </div>
               `;
@@ -1584,6 +1643,9 @@
         const isActive = (id === activeAccId);
         const isHealthy = (acc.status === 'healthy');
         const isEnv = !!acc.is_env_account;
+        // Synthesised from TERABOX_COOKIE, not stored in Redis: the server rejects
+        // activate / re-test / delete for it, so those controls are not shown.
+        const isSynthetic = !!acc.synthetic;
         const lastUsedStr = acc.last_used ? new Date(acc.last_used * 1000).toLocaleString() : 'Never';
         const initial = (acc.username || id).charAt(0).toUpperCase();
 
@@ -1608,6 +1670,8 @@
                 <div>
                   ${isActive 
                     ? '<span class="text-[10px] font-mono font-semibold uppercase px-2.5 py-0.5 rounded-full bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/30">Active</span>'
+                    : isSynthetic
+                    ? '<span class="text-[10px] font-mono text-white/40" title="Not stored in Redis. Used automatically when no pool account is healthy.">Fallback only</span>'
                     : `<button onclick="activateAccount('${escapeQuotes(id)}')" class="text-[11px] font-medium text-white/50 hover:text-[#0A84FF] transition">Set Active</button>`
                   }
                 </div>
@@ -1670,18 +1734,18 @@
                   </svg>
                   <span>Edit</span>
                 </button>
-                <button onclick="verifyAccount('${escapeQuotes(id)}')" title="Re-test credentials with TeraBox" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl ${isHealthy ? 'apple-btn-secondary text-white/70' : 'bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/30 text-[#30D158] font-semibold'} transition">
+                ${isSynthetic ? '' : `<button onclick="verifyAccount('${escapeQuotes(id)}')" title="Re-test credentials with TeraBox" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl ${isHealthy ? 'apple-btn-secondary text-white/70' : 'bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/30 text-[#30D158] font-semibold'} transition">
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>Re-test</span>
-                </button>
+                </button>`}
               </div>
-              <button onclick="deleteAccount('${escapeQuotes(id)}')" class="p-2 rounded-xl bg-[#FF453A]/10 hover:bg-[#FF453A]/20 text-[#FF453A] transition" title="Delete account">
+              ${isSynthetic ? '' : `<button onclick="deleteAccount('${escapeQuotes(id)}')" class="p-2 rounded-xl bg-[#FF453A]/10 hover:bg-[#FF453A]/20 text-[#FF453A] transition" title="Delete account">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-              </button>
+              </button>`}
             </div>
           </div>
         `;
@@ -1902,15 +1966,38 @@
 
       const player = document.getElementById('previewPlayer');
       player.pause();
-      player.src = '';
+      player.removeAttribute('src');
+      player.load();
 
       document.getElementById('previewModal').classList.remove('hidden');
+
+      // <video> cannot send the X-API-Key header, so fetch a short-lived signed URL first.
+      const acc = document.getElementById('accountSelect').value || 'active';
+      const reqId = ++previewRequestSeq;
+      fetch(`/api/admin/cloudvids/preview_url?fs_id=${encodeURIComponent(fsid)}&account_id=${encodeURIComponent(acc)}`, { headers: getAuthHeaders() })
+        .then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => {
+          if (reqId !== previewRequestSeq) return; // modal was closed or another file opened
+          if (!ok || d.status !== 'success' || !d.url) {
+            showToast(d.message || 'Preview unavailable', true);
+            return;
+          }
+          player.src = d.url;
+          player.play().catch(() => {});
+        })
+        .catch(e => {
+          if (reqId === previewRequestSeq) showToast(`Preview failed: ${e.message}`, true);
+        });
     }
 
+    let previewRequestSeq = 0;
+
     function closePreviewModal() {
+      previewRequestSeq++;
       const player = document.getElementById('previewPlayer');
       player.pause();
-      player.src = '';
+      player.removeAttribute('src');
+      player.load();
       document.getElementById('previewModal').classList.add('hidden');
     }
 

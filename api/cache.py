@@ -274,18 +274,47 @@ class ResponseCache:
                 logger.debug("Redis dashboard put error: %s", exc)
 
     def invalidate_dashboard(self, account_id: str | None = None):
-        """Purges cached dashboard quota & file listings for an account or all accounts."""
+        """Purges cached dashboard quota & file listings for an account or all accounts.
+
+        Keys are ``quota:{id}`` and ``cloudvids:{id}:{dir}:{page}:{num}``. The id
+        segment is matched exactly. The ``active`` alias is always purged as well,
+        because the caller cannot tell cheaply whether ``account_id`` is the
+        account the alias currently points at.
+        """
+        ids = None
+        if account_id:
+            ids = {account_id, "active"}
+
+        def _matches(key: str) -> bool:
+            if ids is None:
+                return True
+            for acc in ids:
+                if key == f"quota:{acc}" or key.startswith(f"cloudvids:{acc}:"):
+                    return True
+            return False
+
         if self._redis:
             try:
-                pattern = f"cache:dash:*{account_id}*" if account_id else "cache:dash:*"
-                keys = _scan_keys(self._redis, pattern)
+                if ids is None:
+                    patterns = ["cache:dash:*"]
+                else:
+                    patterns = []
+                    for acc in ids:
+                        patterns.append(f"cache:dash:quota:{acc}")
+                        patterns.append(f"cache:dash:cloudvids:{acc}:*")
+                keys = []
+                for pattern in patterns:
+                    for k in _scan_keys(self._redis, pattern):
+                        k_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                        if _matches(k_str[len("cache:dash:"):]):
+                            keys.append(k)
                 if keys:
                     self._redis.delete(*keys)
             except Exception as exc:
                 logger.debug("Redis dashboard invalidation error: %s", exc)
 
         # In-memory purge
-        to_del = [k for k in self._dash_store if not account_id or account_id in k]
+        to_del = [k for k in self._dash_store if _matches(k)]
         for k in to_del:
             self._dash_store.pop(k, None)
 

@@ -229,12 +229,14 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 
 # ── Middleware stack ─────────────────────────────────────────────────
 # Starlette wraps middleware inside-out, so the last add_middleware() call
-# becomes the outermost layer. Execution order:
-# RequestBodyLimit -> RequestTimeout -> AnalyticsMetrics -> ConfigRefresh -> CORS -> GZip
+# becomes the outermost layer. Execution order (outermost first):
+# GZip -> CORS -> AnalyticsMetrics -> RequestBodyLimit -> RequestTimeout -> ConfigRefresh
+# AnalyticsMetrics sits outside the body-limit and timeout layers so the
+# 413 / 504 responses they produce are counted with their real status.
 app.add_middleware(ConfigRefreshMiddleware)
-app.add_middleware(AnalyticsMetricsMiddleware)
 app.add_middleware(RequestTimeoutMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
+app.add_middleware(AnalyticsMetricsMiddleware)
 
 _allow_origins = list(ALLOWED_ORIGINS) if ALLOWED_ORIGINS else ["*"]
 app.add_middleware(

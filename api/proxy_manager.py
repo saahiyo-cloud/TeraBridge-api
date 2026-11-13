@@ -161,7 +161,6 @@ class ProxyEntry:
         cooling = self.is_cooling_down()
         return {
             "url": mask_proxy(self.url),
-            "raw_url": self.url,
             "status": "cooldown" if cooling else self.status,
             "cooldown_remaining": self.cooldown_remaining(),
             "cooldown_until": int(self.cooldown_until) if self.cooldown_until else 0,
@@ -247,6 +246,11 @@ class ProxyPoolManager:
     def get_healthy_count(self) -> int:
         with self._thread_lock:
             return sum(1 for e in self._entries if not e.is_cooling_down())
+
+    def get_proxy_urls(self) -> list[str]:
+        """Return the unmasked proxy URLs for internal use only (never send to clients)."""
+        with self._thread_lock:
+            return [e.url for e in self._entries]
 
     def get_summary(self) -> dict[str, Any]:
         with self._thread_lock:
@@ -634,6 +638,22 @@ class ProxyPoolManager:
                     raw_data = raw_data.decode("utf-8")
                 if raw_data:
                     entries_list = json.loads(raw_data)
+                    if isinstance(entries_list, list) and not entries_list:
+                        # A stored empty list means the admin cleared the pool on
+                        # purpose; do not fall back to env proxies.
+                        with self._thread_lock:
+                            for url, cl in list(self._clients.items()):
+                                try:
+                                    if not cl.is_closed:
+                                        asyncio.create_task(cl.aclose())
+                                except Exception:
+                                    pass
+                            self._clients.clear()
+                            self._client_loops.clear()
+                            self._entries = []
+                            self._rr_index = 0
+                        logger.info("Proxy pool in Redis is intentionally empty (direct mode)")
+                        return
                     loaded: list[ProxyEntry] = []
                     for item in entries_list:
                         if isinstance(item, dict) and item.get("url"):
