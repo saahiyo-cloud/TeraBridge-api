@@ -272,7 +272,7 @@ async def stream_segment(request: Request):
             headers["Range"] = range_header
 
         from downloader import COOKIES_DICT
-        req_ctx = client.stream("GET", url, headers=headers, cookies=COOKIES_DICT, timeout=30.0)
+        req_ctx = client.stream("GET", url, headers=headers, cookies=COOKIES_DICT, timeout=httpx.Timeout(30.0, connect=5.0))
         req = await req_ctx.__aenter__()
 
         resp_headers: dict = {}

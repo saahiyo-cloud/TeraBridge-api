@@ -212,12 +212,12 @@ async def download_file_route(request: Request):
         async def dlink_refresher() -> str | None:
             """Callback to refresh expired dlink mid-download on upstream 403/410."""
             try:
-                cache.invalidate(share_url, "d", False)
-                fresh_res = await resolve_link_with_retry(share_url, "d", False, None)
+                cache.invalidate(link, "d", False)
+                fresh_res = await resolve_link_with_retry(link, "d", False, None)
                 if fresh_res.get("errno") == 0:
                     fresh_file = _find_file(fresh_res.get("files", []), fs_id)
                     if fresh_file and fresh_file.get("dlink"):
-                        cache.put(share_url, "d", False, fresh_res)
+                        cache.put(link, "d", False, fresh_res)
                         return fresh_file.get("dlink")
             except Exception as e:
                 logger.warning("Failed to refresh dlink during download: %s", e)
@@ -278,7 +278,7 @@ async def download_file_route(request: Request):
             headers["Range"] = range_header
 
         client = _get_active_client()
-        req_ctx = client.stream("GET", dlink, headers=headers, cookies=COOKIES_DICT, timeout=120.0)
+        req_ctx = client.stream("GET", dlink, headers=headers, cookies=COOKIES_DICT, timeout=httpx.Timeout(120.0, connect=5.0))
         req = await req_ctx.__aenter__()
 
         resp_headers = {}
@@ -448,7 +448,7 @@ async def stream_thumbnail(request: Request):
 
     client = _proxy_client
     try:
-        r = await client.get(url, headers={"User-Agent": UA}, timeout=25.0)
+        r = await client.get(url, headers={"User-Agent": UA}, timeout=httpx.Timeout(25.0, connect=5.0))
         if r.status_code == 200:
             thumb_data = r.content
             ct = r.headers.get("Content-Type", "image/jpeg")

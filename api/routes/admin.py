@@ -708,6 +708,7 @@ async def cron_validate(request: Request):
     if redis_client:
         try:
             raw_accounts = redis_client.hgetall(ACCOUNTS_HASH_KEY) or {}
+            to_check: list[tuple[str, str]] = []
             for acc_id, raw_val in raw_accounts.items():
                 acc_id_str = acc_id.decode("utf-8") if isinstance(acc_id, bytes) else acc_id
                 creds = safe_json_loads(raw_val)
@@ -716,20 +717,32 @@ async def cron_validate(request: Request):
                 if creds.get("status", "healthy") == "healthy":
                     cookie_val = creds.get("cookie")
                     if cookie_val:
-                        accounts_checked += 1
-                        is_valid, msg = await validate_session_cookie(cookie_val)
-                        if not is_valid:
-                            if any(w in msg.lower() for w in ("transport failure", "timeout", "network", "connect")):
-                                logger.warning("Account %s health check failed due to network/transport: %s (skipping invalidation)", acc_id_str, msg)
-                            else:
-                                mark_account_unhealthy(acc_id_str, reason=msg)
-                                accounts_invalidated.append((acc_id_str, msg))
-                                await send_webhook_alert(
-                                    f"🚨 **TeraBox Account Expired!**\n"
-                                    f"Account ID: `{acc_id_str}`\n"
-                                    f"Reason: `{msg}`\n\n"
-                                    f"Please refresh its cookie at `/api/admin/config`."
-                                )
+                        to_check.append((acc_id_str, cookie_val))
+
+            # Run the cookie checks concurrently (max 5 in flight), then
+            # handle results sequentially in the original account order.
+            sem = asyncio.Semaphore(5)
+
+            async def _check(cookie_val: str):
+                async with sem:
+                    return await validate_session_cookie(cookie_val)
+
+            results = await asyncio.gather(*[_check(c) for _, c in to_check])
+
+            for (acc_id_str, _), (is_valid, msg) in zip(to_check, results):
+                accounts_checked += 1
+                if not is_valid:
+                    if any(w in msg.lower() for w in ("transport failure", "timeout", "network", "connect")):
+                        logger.warning("Account %s health check failed due to network/transport: %s (skipping invalidation)", acc_id_str, msg)
+                    else:
+                        mark_account_unhealthy(acc_id_str, reason=msg)
+                        accounts_invalidated.append((acc_id_str, msg))
+                        await send_webhook_alert(
+                            f"🚨 **TeraBox Account Expired!**\n"
+                            f"Account ID: `{acc_id_str}`\n"
+                            f"Reason: `{msg}`\n\n"
+                            f"Please refresh its cookie at `/api/admin/config`."
+                        )
 
             # Force-rotate if the active account was just invalidated
             active_id = redis_client.get(ACTIVE_ACCOUNT_KEY)

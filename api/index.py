@@ -18,9 +18,12 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # ── Logger ────────────────────────────────────────────────────────────
 logger = logging.getLogger("terabridge.api")
@@ -89,10 +92,11 @@ def get_proxy_client() -> httpx.AsyncClient:
     """Return the shared proxy AsyncClient, creating it lazily if needed."""
     global _proxy_client
     if _proxy_client is None or _proxy_client.is_closed:
-        _proxy_client = httpx.AsyncClient(
-            follow_redirects=True,
-            event_hooks={"response": [check_safe_redirect]},
-            timeout=120.0,
+        # retries=2 only retries failed connection attempts (never after bytes
+        # have been sent, never on 5xx). The proxy is set on the transport, since
+        # a client-level proxy= would bypass this transport.
+        _transport = httpx.AsyncHTTPTransport(
+            retries=2,
             http2=True if not (OUTBOUND_PROXY and PROXY_DOWNLOADS) else False,
             proxy=OUTBOUND_PROXY if PROXY_DOWNLOADS else None,
             limits=httpx.Limits(
@@ -100,6 +104,12 @@ def get_proxy_client() -> httpx.AsyncClient:
                 max_keepalive_connections=50,
                 keepalive_expiry=90,
             ),
+        )
+        _proxy_client = httpx.AsyncClient(
+            transport=_transport,
+            follow_redirects=True,
+            event_hooks={"response": [check_safe_redirect]},
+            timeout=httpx.Timeout(120.0, connect=5.0),
         )
     return _proxy_client
 
@@ -185,6 +195,37 @@ async def lifespan(app: FastAPI):
 # ─── App ─────────────────────────────────────────────────────────────
 
 app = FastAPI(title="TeraBridge API", version="2.0.0", lifespan=lifespan)
+
+
+# ── Global error handlers: one JSON error shape ─────────────────────
+# {"status": "error", "message": <text>, "detail": <original detail>}
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    detail = exc.detail
+    message = detail if isinstance(detail, str) else "Request failed."
+    return JSONResponse(
+        {"status": "error", "message": message, "detail": jsonable_encoder(detail)},
+        status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        {"status": "error", "message": "Invalid request parameters.", "detail": jsonable_encoder(exc.errors())},
+        status_code=422,
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        {"status": "error", "message": "Internal server error.", "detail": None},
+        status_code=500,
+    )
 
 # ── Middleware stack ─────────────────────────────────────────────────
 # Starlette wraps middleware inside-out, so the last add_middleware() call

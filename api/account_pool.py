@@ -168,4 +168,3 @@ def mark_account_unhealthy(account_id, reason="unknown"):
                 logger.warning("Account '%s' marked UNHEALTHY. Reason: %s", account_id, reason)
         except Exception as e:
             logger.error("Error marking account '%s' unhealthy: %s", account_id, e)
-        logger.error("Failed to mark account %s unhealthy: %s", account_id, e)
