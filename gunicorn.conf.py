@@ -29,6 +29,10 @@ def _int_env(name, default):
 # capable of handling thousands of concurrent connections.
 _default_workers = min((multiprocessing.cpu_count() * 2) + 1, 4)
 workers = _int_env("GUNICORN_WORKERS", _default_workers)
+# Publish the effective count so the app's in-memory rate limiter (used when Redis
+# is unavailable) can divide its budget across workers. Without this the computed
+# default is invisible to the app and every worker would allow the full limit.
+os.environ["GUNICORN_WORKERS"] = str(workers)
 
 # Uvicorn worker class for running ASGI applications under Gunicorn
 worker_class = "uvicorn.workers.UvicornWorker"

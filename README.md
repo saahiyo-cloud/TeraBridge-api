@@ -14,7 +14,7 @@ A lightweight, modular Python API and CLI utility for retrieving direct download
 - **Render Deployable:** One-click deploy on Render's free plan via `render.yaml` Blueprint, with auto-generated secrets and free-plan tuning built in.
 - **Vercel Deployable:** Designed out-of-the-box for quick deployment using the Vercel Python runtime.
 - **Response Caching:** In-memory LRU cache (or Upstash Redis) with configurable TTL (default 60s) reduces redundant Terabox API calls for repeated links.
-- **Rate Limiting:** Per-IP sliding window rate limiter (default 30 req/min) protects Terabox session tokens from exhaustion.
+- **Rate Limiting:** Per-IP sliding window rate limiter (default 30 req/min) protects Terabox session tokens from exhaustion. Shared across workers when Redis is configured; without Redis each worker counts separately and the limit is divided by `GUNICORN_WORKERS` (approximate).
 - **Non-blocking HTTP Client:** Uses `httpx.AsyncClient` with connection pooling, automatic retry on 5xx errors, and HTTP/2 multiplexing.
 - **Single-Flight Request Collapsing:** Duplicate concurrent requests for the same link are collapsed into a single upstream call, dramatically reducing Terabox API load under burst traffic.
 - **HMAC-Signed Proxy URLs:** All download, stream, and thumbnail proxy URLs are signed with time-limited HMAC tokens for security.
@@ -109,14 +109,14 @@ This launches an **Uvicorn** ASGI server on `http://0.0.0.0:5000`. The async eve
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 | `FIREBASE_PROJECT_ID` | `teraplay-project` | Google Firebase project ID for validating client Bearer JWT ID tokens. |
 | `REDIRECT_SEGMENTS` | `false` | When `true`, returns a `307` redirect to the upstream CDN for `.ts` segments instead of proxying bytes. Cuts container egress bandwidth ~90%. |
-| `TRUSTED_PROXIES` | *(empty)* | Comma-separated list of proxy IPs/CIDRs. Loopback addresses are trusted automatically. |
+| `TRUSTED_PROXIES` | *(empty)* | Comma-separated list of proxy IPs/CIDRs. Loopback and private ranges are trusted automatically. Cloudflare edge ranges are recognised built-in: `CF-Connecting-IP` is honoured only when the upstream hop is a Cloudflare address. |
 | `RENDER` | *(unset)* | Set to `true` on Render.com to auto-trust Render's reverse proxy header. |
 | `VERCEL` | *(auto)* | Set automatically by Vercel environment. |
 | `CRON_SECRET` | *(unset)* | Secret token to authenticate cron keep-alive / cookie validation requests. |
 | `UPSTASH_REDIS_REST_URL` | *(unset)* | Upstash Redis REST URL for distributed caching, rate limiting, and account pools. |
 | `UPSTASH_REDIS_REST_TOKEN` | *(unset)* | Upstash Redis REST token. |
 | `NOTIFICATION_WEBHOOK_URL` | *(unset)* | Webhook URL (Discord / Slack) for session expiration and transcode completion alerts. |
-| `ALLOWED_ORIGINS` | *(empty)* | Comma-separated CORS origin allowlist. Empty = permissive in dev. |
+| `ALLOWED_ORIGINS` | *(empty)* | Comma-separated CORS origin allowlist. Empty = `Access-Control-Allow-Origin: *` (credentials are not allowed). Set it in production to your front-end origins. |
 | `SIG_TTL_SEGMENT_FREE` / `_PREMIUM` | `1800` / `7200` | Expiration TTL (in seconds) for signed HLS stream segment URLs (Free: 30m, Premium: 2h). |
 | `SIG_TTL_DOWNLOAD_FREE` / `_PREMIUM` | `7200` / `86400` | Expiration TTL (in seconds) for signed download URLs (Free: 2h, Premium: 24h). |
 | `SIG_TTL_MANIFEST_FREE` / `_PREMIUM` | `86400` / `2592000` | Expiration TTL (in seconds) for signed manifest URLs (Free: 24h, Premium: 30d). |
@@ -133,7 +133,7 @@ API_KEY=my_secret_key CACHE_TTL=120 PORT=8080 python api/index.py
 
 Protected endpoints (`/api/stats`, `/api/resolve`, `/api/admin/config`, `/api/debug_curl`, and unsigned `/api/stream/*` and `/api/download` requests) enforce authentication when `REQUIRE_API_KEY` is active (default).
 
-Clients can authenticate using any of the following methods:
+Clients authenticate with one of the following headers:
 
 1. **HTTP Custom Header**:
    ```http
@@ -143,16 +143,10 @@ Clients can authenticate using any of the following methods:
    ```http
    Authorization: Bearer my_secret_key
    ```
-3. **Query Parameter** (convenient for media players like VLC / PotPlayer):
-   ```
-   ?key=my_secret_key   or   ?api_key=my_secret_key
-   ```
-4. **JSON Request Body** (for POST requests):
-   ```json
-   {
-     "key": "my_secret_key"
-   }
-   ```
+
+> **The key is not accepted in the query string or the JSON body.** `?key=`, `?api_key=` and body `key` fields return `401`, because URLs end up in access logs, browser history and `Referer` headers. Media players that cannot send headers should use the HMAC-signed URLs returned by `/api/resolve` (below).
+>
+> **Admin dashboard:** `/admin` shows a login form that POSTs the key to `/admin/login` and receives an `HttpOnly`, `SameSite=Strict` session cookie (30 days, `Secure` over HTTPS). Only the admin endpoints read that cookie; the public API does not.
 
 Rewritten segment, download, and thumbnail proxy URLs generated by `/api/resolve` and `/api/stream/manifest` use HMAC-signed tokens (`sig` + `exp` parameters) for authentication, allowing streaming players to fetch sub-resources without resending the API key on every request.
 
@@ -359,7 +353,7 @@ Railway uses the included `railway.toml` and `Dockerfile` — no extra setup nee
 - Railway runs the app as a Docker container using Gunicorn + UvicornWorker (configured in `gunicorn.conf.py`). Worker count scales with CPU cores.
 - The app is always-on (no spin-down) unlike Render's free plan, so no keep-alive pings are needed.
 - Railway's free tier includes a **$5/month credit**. Since this app proxies large file streams, setting `REDIRECT_SEGMENTS=true` is strongly recommended to minimise egress costs.
-- For accurate client IP resolution behind Railway's proxy, no extra config is needed — loopback addresses are trusted automatically. If you add a custom domain with Cloudflare or another CDN in front, add its CIDR to `TRUSTED_PROXIES`.
+- For accurate client IP resolution behind Railway's proxy, no extra config is needed — loopback addresses are trusted automatically. If you add a custom domain with Cloudflare or another CDN in front, add its CIDR to `TRUSTED_PROXIES`. Cloudflare itself needs no config: the real client IP is taken from `CF-Connecting-IP` (or the first non-Cloudflare `X-Forwarded-For` hop), so the per-IP limit is not split across edge nodes.
 
 ---
 

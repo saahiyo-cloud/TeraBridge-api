@@ -761,11 +761,11 @@
     let selectedPaths = new Set();
     let apiKey = sessionStorage.getItem('terabridge_api_key') || localStorage.getItem('terabridge_api_key') || '';
 
-    // If no key in storage, check query parameter ?key=...
-    const urlParams = new URLSearchParams(window.location.search);
-    if (!apiKey && urlParams.get('key')) {
-      apiKey = urlParams.get('key');
-      sessionStorage.setItem('terabridge_api_key', apiKey);
+    // The key is no longer accepted from the URL. The login form (POST /admin/login)
+    // sets an HttpOnly session cookie that the admin API reads, so requests work
+    // without a key in JS. A key entered via the button is still sent as a header.
+    if (new URLSearchParams(window.location.search).has('key')) {
+      history.replaceState(null, '', window.location.pathname);
     }
     updateAuthBtnText();
 
@@ -774,7 +774,7 @@
       if (apiKey) {
         btn.textContent = `Key: ${apiKey.slice(0, 4)}...${apiKey.slice(-3)}`;
       } else {
-        btn.textContent = 'Set API Key';
+        btn.textContent = 'Admin Session';
       }
     }
 

@@ -10,9 +10,11 @@ Handles:
   - Response formatting (proxy URLs, HMAC signing)
 """
 import asyncio
+import json
 import logging
 import re
 import threading
+import time
 import urllib.parse
 
 from fastapi import APIRouter, Request
@@ -20,7 +22,12 @@ from fastapi.responses import JSONResponse
 
 from api.auth import check_auth
 from api.cache import cache
-from api.config import RATE_LIMIT_RPM, RATE_LIMIT_WINDOW
+from api.config import (
+    RATE_LIMIT_RPM,
+    RATE_LIMIT_WINDOW,
+    REQUEST_TIMEOUT_SECONDS,
+    RESOLVE_TIMEOUT_SECONDS,
+)
 from api.middleware import client_ip, request_base_url
 from api.rate_limiter import rate_limiter
 from api.redis_client import redis_client
@@ -40,6 +47,36 @@ from api.account_pool import (
 
 logger = logging.getLogger("terabridge.routes.resolve")
 router = APIRouter()
+
+# ── Input validation ──────────────────────────────────────────────────
+MAX_LINK_LENGTH = 2048
+MIN_SURL_LENGTH = 15  # conservative floor; real ids are 22-23 chars
+
+_MODE_ALIASES = {
+    "d": "d", "download": "d",
+    "s": "s", "stream": "s", "streaming": "s", "both": "s",
+    "l": "l", "list": "l", "info": "l", "metadata": "l",
+}
+
+
+def _bad_request(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"status": "error", "message": message}, status_code=status_code)
+
+
+def _looks_like_http_url(value: str) -> bool:
+    from api.middleware import _is_private_or_local_host
+
+    parsed = urllib.parse.urlparse(value)
+    return (
+        parsed.scheme in ("http", "https")
+        and bool(parsed.hostname)
+        and not _is_private_or_local_host(parsed.hostname)
+    )
+
+
+def _scrub_upstream(message) -> str:
+    """Drop TeraBox request ids from upstream error text before returning it."""
+    return re.sub(r",?\s*request_id=[\w-]+", "", str(message))
 
 # ── account-rotation state (shared with admin routes via account_manager) ──
 _current_active_account_id: str | None = None
@@ -308,10 +345,18 @@ _sf_events: dict[str, asyncio.Event] = {}
 _sf_lock = threading.Lock()
 
 
+# Time budget (seconds). The API-level resolve timeout is kept below the request
+# timeout so the route answers with its own clean 504 rather than being cancelled
+# by RequestTimeoutMiddleware; the lock must outlive a full resolve attempt, or a
+# second request would start duplicate upstream work while the first is running.
+_RESOLVE_BUDGET_SECONDS = max(5, min(RESOLVE_TIMEOUT_SECONDS, REQUEST_TIMEOUT_SECONDS - 5))
+_LOCK_TTL_SECONDS = int(_RESOLVE_BUDGET_SECONDS) + 10
+
+
 def _acquire_resolve_lock(key: str) -> bool:
     if redis_client:
         try:
-            return bool(redis_client.set(f"lock:resolve:{key}", "locked", nx=True, ex=30))
+            return bool(redis_client.set(f"lock:resolve:{key}", "locked", nx=True, ex=_LOCK_TTL_SECONDS))
         except Exception as exc:
             logger.warning("[SingleFlight] Redis lock set error: %s", exc)
 
@@ -335,18 +380,19 @@ def _release_resolve_lock(key: str):
         ev.set()
 
 
-async def _wait_for_resolution(key: str, check_cache_fn, timeout: int = 30):
+async def _wait_for_resolution(key: str, check_cache_fn, timeout: float = 30):
     if redis_client:
         import time as _time
         start = _time.time()
         while _time.time() - start < timeout:
-            cached = check_cache_fn()
+            # Upstash calls are blocking HTTP requests: keep them off the event loop.
+            cached = await asyncio.to_thread(check_cache_fn)
             if cached is not None:
                 return cached
-            if not redis_client.exists(f"lock:resolve:{key}"):
+            if not await asyncio.to_thread(redis_client.exists, f"lock:resolve:{key}"):
                 break
             await asyncio.sleep(1.0)
-        return check_cache_fn()
+        return await asyncio.to_thread(check_cache_fn)
 
     with _sf_lock:
         ev = _sf_events.get(key)
@@ -514,10 +560,15 @@ async def resolve(request: Request):
     wait_for_transcoding = False
 
     if request.method == "POST":
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
+        raw_body = await request.body()
+        data = {}
+        if raw_body.strip():
+            try:
+                data = json.loads(raw_body)
+            except (ValueError, UnicodeDecodeError):
+                return _bad_request("Invalid JSON body.")
+            if not isinstance(data, dict):
+                return _bad_request("Request body must be a JSON object.")
         link = data.get("url") or data.get("link") or ""
         action = data.get("mode") or data.get("action") or "d"
         wait_for_transcoding = bool(data.get("wait"))
@@ -527,23 +578,39 @@ async def resolve(request: Request):
         wait_for_transcoding = request.query_params.get("wait") in ("true", "1", "True")
 
     if not link:
-        return JSONResponse(
-            {"status": "error", "message": "Missing required parameter 'url' or 'link'."},
-            status_code=400,
+        return _bad_request("Missing required parameter 'url' or 'link'.")
+    if not isinstance(link, str):
+        return _bad_request("Parameter 'url' must be a string.")
+    if len(link) > MAX_LINK_LENGTH:
+        return _bad_request(
+            f"Parameter 'url' is too long (max {MAX_LINK_LENGTH} characters).", status_code=413
         )
 
     # Strip zero-width / bidi characters
     link = re.sub(
         r"[\s\u200b\u200c\u200d\ufeff\u202a\u202b\u202c\u202d\u202e]+", "", link
     )
+    if not link:
+        return _bad_request("Missing required parameter 'url' or 'link'.")
 
-    act_lower = action.lower()
-    if act_lower in ("s", "stream", "streaming", "both"):
-        action = "s"
-    elif act_lower in ("l", "list", "info", "metadata"):
-        action = "l"
-    else:
-        action = "d"
+    # Validate mode locally: an unknown value must not silently run a download.
+    if not isinstance(action, str) or action.lower() not in _MODE_ALIASES:
+        return _bad_request("Invalid mode. Use one of: download, stream, list.")
+    action = _MODE_ALIASES[action.lower()]
+
+    # Validate the share link locally so junk never reaches TeraBox.
+    # http(s) URLs that are not recognisable share links are still passed on:
+    # resolve_link follows third-party shorteners and re-parses the destination.
+    try:
+        parsed_surl = parse_surl(link)
+        # parse_surl accepts any 8+ char slug; real TeraBox ids are 22-23 chars.
+        if len(parsed_surl) < MIN_SURL_LENGTH:
+            raise ValueError("short")
+    except ValueError:
+        if not _looks_like_http_url(link):
+            return _bad_request(
+                "Invalid share link. Provide a TeraBox share URL or short link ID."
+            )
 
     # ── Cache hit ─────────────────────────────────────────────────────
     cached = cache.get(link, action, wait_for_transcoding)
@@ -556,15 +623,17 @@ async def resolve(request: Request):
         )
 
     # ── Single-flight ─────────────────────────────────────────────────
+    started = time.monotonic()
     cache_key = cache.make_key(link, action, wait_for_transcoding)
     has_lock = _acquire_resolve_lock(cache_key)
 
     if not has_lock:
         logger.info("[SingleFlight] Waiting for concurrent resolution of: %s", link)
+        # Wait at most as long as the leader can legitimately run.
         cached = await _wait_for_resolution(
             cache_key,
             lambda: cache.get(link, action, wait_for_transcoding),
-            timeout=30,
+            timeout=_RESOLVE_BUDGET_SECONDS,
         )
         if cached is not None:
             resp_headers = {"X-Cache": "HIT (COLLAPSED)"}
@@ -574,32 +643,33 @@ async def resolve(request: Request):
                 headers=resp_headers,
             )
         logger.info("[SingleFlight] Wait timed out, resolving independently: %s", link)
-        _acquire_resolve_lock(cache_key)
+        # Only the request that actually holds the lock may release it later.
+        has_lock = _acquire_resolve_lock(cache_key)
 
     try:
-        from api.config import RESOLVE_TIMEOUT_SECONDS
+        # Whatever the wait consumed comes out of the same budget, so the total
+        # stays under the request timeout.
+        remaining_budget = max(1.0, REQUEST_TIMEOUT_SECONDS - 5 - (time.monotonic() - started))
+        resolve_budget = min(float(RESOLVE_TIMEOUT_SECONDS), remaining_budget)
         try:
             res = await asyncio.wait_for(
                 resolve_link_with_retry(
                     link, action=action, wait_for_transcoding=wait_for_transcoding
                 ),
-                timeout=float(RESOLVE_TIMEOUT_SECONDS),
+                timeout=resolve_budget,
             )
         except asyncio.TimeoutError:
-            logger.warning("[Resolve] Operation timed out after %ds for %s", RESOLVE_TIMEOUT_SECONDS, link)
+            logger.warning("[Resolve] Operation timed out after %.0fs for %s", resolve_budget, link)
             return JSONResponse(
                 {
                     "status": "error",
-                    "message": f"Upstream resolution timed out after {RESOLVE_TIMEOUT_SECONDS}s. Please retry shortly.",
+                    "message": f"Upstream resolution timed out after {int(resolve_budget)}s. Please retry shortly.",
                 },
                 status_code=504,
             )
 
         if res.get("errno") != 0:
-            return JSONResponse(
-                {"status": "error", "message": res.get("error", "Unknown resolution error.")},
-                status_code=400,
-            )
+            return _bad_request(_scrub_upstream(res.get("error", "Unknown resolution error.")))
 
         response_data, is_transcoding = format_resolved_response(request, res, link)
 
@@ -625,8 +695,8 @@ async def resolve(request: Request):
             headers=miss_headers,
         )
 
-    except ValueError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+    except ValueError:
+        return _bad_request("Invalid share link.")
     except Exception as exc:
         logger.exception("[Resolve] Server error handling link: %s", exc)
         return JSONResponse(
@@ -634,4 +704,5 @@ async def resolve(request: Request):
             status_code=500,
         )
     finally:
-        _release_resolve_lock(cache_key)
+        if has_lock:
+            _release_resolve_lock(cache_key)

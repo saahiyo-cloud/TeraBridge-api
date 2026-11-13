@@ -22,7 +22,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # ── Logger ────────────────────────────────────────────────────────────
@@ -69,10 +69,14 @@ from api.middleware import (
     AnalyticsMetricsMiddleware,
     RequestBodyLimitMiddleware,
     RequestTimeoutMiddleware,
+    SecurityHeadersMiddleware,
     check_safe_redirect,
+    client_ip,
+    is_https_request,
     set_config_loader,
 )
 from api.account_manager import load_config_from_redis
+from api.auth import ADMIN_COOKIE_NAME, check_admin
 from api.rate_limiter import rate_limiter
 from api.redis_client import redis_client
 from downloader import close_session
@@ -230,7 +234,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # ── Middleware stack ─────────────────────────────────────────────────
 # Starlette wraps middleware inside-out, so the last add_middleware() call
 # becomes the outermost layer. Execution order (outermost first):
-# GZip -> CORS -> AnalyticsMetrics -> RequestBodyLimit -> RequestTimeout -> ConfigRefresh
+# SecurityHeaders -> GZip -> CORS -> AnalyticsMetrics -> RequestBodyLimit -> RequestTimeout -> ConfigRefresh
 # AnalyticsMetrics sits outside the body-limit and timeout layers so the
 # 413 / 504 responses they produce are counted with their real status.
 app.add_middleware(ConfigRefreshMiddleware)
@@ -249,6 +253,9 @@ app.add_middleware(
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# Outermost: security headers land on every response, including 413/504 and CORS preflights.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────
 
@@ -282,8 +289,17 @@ def home():
 
 @app.get("/healthz")
 @app.get("/api/health")
-def healthz():
-    """Standardized liveness & readiness probe for Docker, Railway, Render."""
+async def healthz(request: Request):
+    """
+    Liveness & readiness probe for Docker, Railway, Render.
+
+    Unauthenticated callers only get a minimal status; infrastructure details
+    (Redis mode, proxy counts, uptime) are returned to admin-authenticated callers.
+    """
+    minimal = {"status": "healthy", "service": "terabridge-api"}
+    if not await check_admin(request):
+        return minimal
+
     from api.routes import admin as _admin
     from api.proxy_manager import proxy_manager
     from api.redis_client import redis_client
@@ -292,8 +308,7 @@ def healthz():
     healthy_proxies = proxy_manager.get_healthy_count()
 
     return {
-        "status": "healthy",
-        "service": "terabridge-api",
+        **minimal,
         "uptime_seconds": int(time.time() - _admin._start_time),
         "redis": "connected" if redis_client else "in-memory",
         "proxies": {
@@ -328,11 +343,11 @@ def _is_admin_authorized(request: Request) -> bool:
     if not API_KEY:
         return False
 
+    # Header, Bearer or the HttpOnly session cookie set by POST /admin/login.
+    # The key is never accepted from the URL.
     key = (
         request.headers.get("X-API-Key")
-        or request.query_params.get("key")
-        or request.query_params.get("api_key")
-        or request.cookies.get("terabridge_admin_key")
+        or request.cookies.get(ADMIN_COOKIE_NAME)
     )
     if not key:
         auth_h = request.headers.get("Authorization") or ""
@@ -340,7 +355,7 @@ def _is_admin_authorized(request: Request) -> bool:
             key = auth_h[7:].strip()
 
     import hmac
-    if key and hmac.compare_digest(key, API_KEY):
+    if key and hmac.compare_digest(key.encode(), API_KEY.encode()):
         return True
     return False
 
@@ -378,46 +393,81 @@ _ADMIN_LOCK_HTML = """<!DOCTYPE html>
       <h1 class="text-xl font-semibold tracking-tight text-white">TeraBridge</h1>
       <p class="text-xs text-white/50 mt-1 uppercase tracking-wider font-medium">Cloudvids Manager — Admin Console</p>
     </div>
-    <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4">
+    <form id="loginForm" method="post" action="/admin/login" class="space-y-4">
       <div>
-        <input id="keyInput" type="password" placeholder="Enter Admin API Key (X-API-Key)" required
+        <input id="keyInput" name="key" type="password" autocomplete="current-password" placeholder="Enter Admin API Key" required
           class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/30 focus:outline-none focus:border-[#0A84FF] focus:ring-1 focus:ring-[#0A84FF] transition-all" />
       </div>
       <button type="submit"
         class="w-full py-3 bg-[#0A84FF] hover:bg-[#0077ED] active:scale-[0.98] text-white font-medium text-sm rounded-xl transition-all shadow-md shadow-[#0A84FF]/20">
         Unlock Dashboard
       </button>
-      <p id="errorMsg" class="text-xs text-[#FF453A] hidden">Invalid key format or authentication rejected.</p>
+      <p id="errorMsg" class="text-xs text-[#FF453A] __ERR_CLASS__">__ERR_TEXT__</p>
     </form>
     <p class="text-[11px] text-white/30">Protected by TeraBridge secure HMAC & session safeguards.</p>
   </div>
-  <script>
-    function handleLogin(e) {
-      e.preventDefault();
-      const val = document.getElementById('keyInput').value.trim();
-      if (!val) return;
-      sessionStorage.setItem('terabridge_api_key', val);
-      document.cookie = 'terabridge_admin_key=' + encodeURIComponent(val) + '; Path=/; Max-Age=2592000; SameSite=Lax';
-      window.location.href = window.location.pathname + '?key=' + encodeURIComponent(val);
-    }
-  </script>
 </body>
 </html>"""
+
+
+def _lock_page(error: str = "", status_code: int = 200, headers: dict | None = None) -> HTMLResponse:
+    html = _ADMIN_LOCK_HTML.replace("__ERR_TEXT__", error).replace(
+        "__ERR_CLASS__", "" if error else "hidden"
+    )
+    return HTMLResponse(html, status_code=status_code, headers=headers)
+
+
+@app.post("/admin/login")
+async def admin_login(request: Request):
+    """
+    Dashboard login. The key is POSTed in the request body (never in the URL) and,
+    when valid, exchanged for an HttpOnly, SameSite=Strict session cookie that the
+    admin guard accepts. Failed attempts count toward the auth-failure lockout.
+    """
+    import hmac
+    import urllib.parse
+
+    ip = client_ip(request)
+    if not await rate_limiter.is_auth_allowed_async(ip):
+        return _lock_page(
+            "Too many failed attempts. Try again shortly.",
+            status_code=429,
+            headers=rate_limiter.get_auth_headers(ip),
+        )
+
+    raw = (await request.body())[:4096].decode("utf-8", "replace")
+    key = (urllib.parse.parse_qs(raw).get("key") or [""])[0].strip()
+
+    if not API_KEY:
+        # Open (dev) mode: nothing to unlock.
+        return RedirectResponse("/admin", status_code=303)
+
+    if not key or not hmac.compare_digest(key.encode(), API_KEY.encode()):
+        await rate_limiter.record_auth_failure_async(ip)
+        return _lock_page("Invalid key.", status_code=401)
+
+    resp = RedirectResponse("/admin", status_code=303)
+    resp.set_cookie(
+        ADMIN_COOKIE_NAME,
+        key,
+        max_age=2592000,
+        httponly=True,
+        samesite="strict",
+        secure=is_https_request(request),
+        path="/",
+    )
+    return resp
 
 
 @app.get("/admin", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def serve_dashboard(request: Request):
     if not _is_admin_authorized(request):
-        return HTMLResponse(_ADMIN_LOCK_HTML, status_code=200)
+        return _lock_page()
 
     dashboard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "dashboard.html")
     if os.path.exists(dashboard_path):
-        resp = FileResponse(dashboard_path, media_type="text/html")
-        key = request.query_params.get("key") or request.query_params.get("api_key")
-        if key:
-            resp.set_cookie("terabridge_admin_key", key, max_age=2592000, httponly=True, samesite="lax")
-        return resp
+        return FileResponse(dashboard_path, media_type="text/html")
     return HTMLResponse("<h3>Dashboard file not found.</h3>", status_code=404)
 
 

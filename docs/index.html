@@ -344,7 +344,7 @@ python downloader.py --list <span class="tok-str">"https://1024terabox.com/s/1Ay
     <section class="docs-section" id="authentication">
       <div class="eyebrow">Security &amp; Access Control</div>
       <h2 class="section-heading">Authentication Strategy</h2>
-      <p>When <code>REQUIRE_API_KEY</code> is enabled (default in production), protected endpoints accept credentials via four distinct channels:</p>
+      <p>When <code>REQUIRE_API_KEY</code> is enabled (default in production), protected endpoints accept credentials via two request headers (the key is never accepted in the URL or request body):</p>
 
       <div class="spec-table-wrap">
         <table class="spec-table">
@@ -365,16 +365,6 @@ python downloader.py --list <span class="tok-str">"https://1024terabox.com/s/1Ay
               <td><span class="param-name">Bearer Token</span></td>
               <td><code>Authorization: Bearer &lt;key_or_firebase_jwt&gt;</code></td>
               <td>Supports both static API keys and Google Firebase Client ID tokens.</td>
-            </tr>
-            <tr>
-              <td><span class="param-name">Query Parameter</span></td>
-              <td><code>?key=my_secret_key</code> or <code>?api_key=my_secret_key</code></td>
-              <td>Direct media player feeds (VLC, PotPlayer, Infuse, Kodi).</td>
-            </tr>
-            <tr>
-              <td><span class="param-name">JSON Body</span></td>
-              <td><code>{ "key": "my_secret_key" }</code></td>
-              <td>POST requests to <code>/api/resolve</code> or admin control endpoints.</td>
             </tr>
           </tbody>
         </table>

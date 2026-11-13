@@ -471,8 +471,13 @@ class TestTeraBridgeAPI(unittest.TestCase):
         d1 = resp1.json()
         self.assertEqual(d1.get("status"), "healthy")
         self.assertEqual(d1.get("service"), "terabridge-api")
-        self.assertIn("proxies", d1)
-        self.assertIn("redis", d1)
+        # Unauthenticated probe is trimmed to non-sensitive fields
+        self.assertNotIn("proxies", d1)
+        self.assertNotIn("redis", d1)
+        # Admin callers still get the detail
+        d_admin = self.make_request("GET", "/healthz", headers={"X-API-Key": API_KEY}).json()
+        self.assertIn("proxies", d_admin)
+        self.assertIn("redis", d_admin)
 
         resp2 = self.make_request("GET", "/api/health")
         self.assertEqual(resp2.status_code, 200)

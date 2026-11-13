@@ -16,6 +16,7 @@ import urllib.parse
 
 import httpx
 from fastapi import HTTPException, Request, Response
+from starlette.datastructures import MutableHeaders
 
 from api.config import (
     ALLOWED_STREAM_SUFFIXES,
@@ -103,6 +104,31 @@ _PRIVATE_PROXY_CIDRS = (
 )
 
 
+# Published Cloudflare edge ranges (https://www.cloudflare.com/ips/).
+_CLOUDFLARE_CIDRS = tuple(
+    ipaddress.ip_network(c)
+    for c in (
+        "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+        "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+        "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+        "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+        "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+        "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+    )
+)
+
+
+def _parse_ip(value: str):
+    try:
+        return ipaddress.ip_address(value.strip().split("%")[0])
+    except ValueError:
+        return None
+
+
+def _is_cloudflare(ip) -> bool:
+    return ip is not None and any(ip in cidr for cidr in _CLOUDFLARE_CIDRS)
+
+
 def _peer_ip(request: Request):
     addr = request.client.host if request.client else None
     if not addr:
@@ -121,6 +147,11 @@ def _is_trusted_peer(request: Request, peer=None) -> bool:
     if peer is None:
         return False
     if any(peer in cidr for cidr in _LOOPBACK_CIDRS) or any(peer in cidr for cidr in _PRIVATE_PROXY_CIDRS):
+        return True
+    # A Cloudflare edge as peer: either Cloudflare connects directly, or the
+    # ASGI server's proxy-headers handling already rewrote the peer to the
+    # last XFF hop (it only does so for its own trusted forwarders).
+    if _is_cloudflare(peer):
         return True
     if TRUSTED_PROXY_CIDRS and any(peer in cidr for cidr in TRUSTED_PROXY_CIDRS):
         return True
@@ -142,25 +173,36 @@ def _resolve_client_ip(request: Request) -> str:
         return str(peer)
 
     xff = request.headers.get("X-Forwarded-For", "")
-    if not xff:
+    chain = [h.strip() for h in xff.split(",") if h.strip()]
+
+    # Cloudflare in front of the platform proxy: the right-most XFF hop (or the
+    # peer) is a Cloudflare edge node, whose address changes from request to
+    # request. Keying the rate limiter on it splits one client across many
+    # counters. CF-Connecting-IP carries the real client, and is only honoured
+    # when the immediate upstream really is a Cloudflare address, so a client
+    # that reaches the origin some other way cannot forge it.
+    # Note: uvicorn/gunicorn's proxy-headers support may already have replaced
+    # the peer with the right-most XFF hop (the edge node), so check both.
+    cf_client = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf_client:
+        upstream = _parse_ip(chain[-1]) if chain else peer
+        client = _parse_ip(cf_client)
+        if client is not None and (_is_cloudflare(upstream) or _is_cloudflare(peer)):
+            return str(client)
+
+    if not chain:
         return str(peer)
 
-    if ON_RENDER or (
-        not TRUSTED_PROXY_CIDRS and any(peer in c for c in _LOOPBACK_CIDRS)
-    ):
-        return xff.split(",")[-1].strip()
-
-    chain = [h.strip() for h in xff.split(",") if h.strip()]
-    candidate = str(peer)
+    # Walk the chain from the proxy side: skip our own trusted proxies and
+    # Cloudflare edge hops; the first remaining hop is the client.
     for hop in reversed(chain):
-        try:
-            hop_ip = ipaddress.ip_address(hop.split("%")[0])
-        except ValueError:
+        hop_ip = _parse_ip(hop)
+        if hop_ip is None:
             return hop
-        if any(hop_ip in cidr for cidr in TRUSTED_PROXY_CIDRS):
+        if _is_cloudflare(hop_ip) or any(hop_ip in cidr for cidr in TRUSTED_PROXY_CIDRS):
             continue
         return str(hop_ip)
-    return candidate
+    return str(peer)
 
 
 def client_ip(request: Request) -> str:
@@ -264,6 +306,59 @@ class LogQueryTruncateMiddleware:
                         scope["query_string"] = original_qs
                     return
         await self.app(scope, receive, send)
+
+
+def is_https_request(request: Request) -> bool:
+    """True when the client connection is HTTPS, trusting proxy headers only from trusted peers."""
+    if request.url.scheme == "https" or ON_RENDER or ON_VERCEL:
+        return True
+    if not _is_trusted_peer(request):
+        return False
+    proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+    if proto:
+        return proto == "https"
+    return '"scheme":"https"' in request.headers.get("CF-Visitor", "").replace(" ", "")
+
+
+_HSTS_VALUE = "max-age=31536000; includeSubDomains"
+
+
+class SecurityHeadersMiddleware:
+    """
+    Adds baseline security headers to every response (API, dashboard, errors):
+    X-Content-Type-Options, Referrer-Policy, X-Frame-Options and CSP frame-ancestors.
+    Adds Strict-Transport-Security only when the request arrived over HTTPS.
+    Headers already set by a route are left untouched.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                defaults = {
+                    "X-Content-Type-Options": "nosniff",
+                    "Referrer-Policy": "no-referrer",
+                    "X-Frame-Options": "DENY",
+                    "Content-Security-Policy": "frame-ancestors 'none'",
+                }
+                try:
+                    if is_https_request(Request(scope)):
+                        defaults["Strict-Transport-Security"] = _HSTS_VALUE
+                except Exception:
+                    pass
+                for name, value in defaults.items():
+                    if name not in headers:
+                        headers[name] = value
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 class AnalyticsMetricsMiddleware:

@@ -2,7 +2,7 @@
 api/auth.py — Authentication helpers for TeraBridge API.
 
 Handles:
-  - API key extraction from headers / query params / body
+  - API key extraction from headers (X-API-Key / Bearer); admin guard also accepts the dashboard cookie
   - Firebase ID token verification (RS256 JWT)
   - check_auth / check_admin guards used by route handlers
   - User-tier resolution (free / premium) with local + Redis caching
@@ -102,7 +102,18 @@ def get_recent_auth_errors() -> list:
 
 
 # ─── API key extraction ───────────────────────────────────────────────
-def _extract_api_key(request: Request, body_json=None, exclude_jwt: bool = False) -> str | None:
+ADMIN_COOKIE_NAME = "terabridge_admin_key"
+
+
+def _extract_api_key(request: Request, exclude_jwt: bool = False, allow_cookie: bool = False) -> str | None:
+    """
+    Read the credential from `X-API-Key` or `Authorization: Bearer`.
+
+    The key is deliberately NOT read from the query string or the request body:
+    URLs end up in access logs, browser history and Referer headers. The admin
+    dashboard's HttpOnly session cookie is accepted only when ``allow_cookie`` is
+    set (admin guard), never for the public API.
+    """
     client_key = request.headers.get("X-API-Key")
 
     if not client_key:
@@ -112,14 +123,8 @@ def _extract_api_key(request: Request, body_json=None, exclude_jwt: bool = False
             if not (exclude_jwt and bearer_token.count(".") == 2):
                 client_key = bearer_token
 
-    if not client_key:
-        client_key = (
-            request.query_params.get("key")
-            or request.query_params.get("api_key")
-        )
-
-    if not client_key and body_json is not None:
-        client_key = body_json.get("key") or body_json.get("api_key")
+    if not client_key and allow_cookie:
+        client_key = request.cookies.get(ADMIN_COOKIE_NAME)
 
     return client_key
 
@@ -131,14 +136,7 @@ async def check_auth(request: Request) -> bool:
 
     request.state.auth_type = None
 
-    body_json = None
-    if "application/json" in request.headers.get("content-type", ""):
-        try:
-            body_json = await request.json()
-        except Exception:
-            pass
-
-    client_key = _extract_api_key(request, body_json)
+    client_key = _extract_api_key(request)
 
     # Firebase JWT (three-part dot-separated token)
     if client_key and client_key.count(".") == 2:
@@ -171,14 +169,7 @@ async def check_admin(request: Request) -> bool:
     if not API_KEY:
         return False
 
-    body_json = None
-    if "application/json" in request.headers.get("content-type", ""):
-        try:
-            body_json = await request.json()
-        except Exception:
-            pass
-
-    client_key = _extract_api_key(request, body_json, exclude_jwt=True)
+    client_key = _extract_api_key(request, exclude_jwt=True, allow_cookie=True)
     if not client_key:
         return False
 

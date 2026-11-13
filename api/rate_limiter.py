@@ -4,7 +4,10 @@ api/rate_limiter.py — Per-IP sliding-window rate limiter with optional Redis b
 Features:
   - Atomic sliding-window rate limiting (Redis sorted sets or in-process deque).
   - Non-counting rejections: blocked requests do NOT consume quota or self-extend lockout.
-  - Multi-worker aware: partitions in-memory limits across Gunicorn workers when Redis is down.
+  - Multi-worker aware: with Redis, one shared counter per client. Without Redis (or while it
+    errors), each worker keeps its own counters and the limit is divided by the worker count
+    (GUNICORN_WORKERS / WEB_CONCURRENCY, exported by gunicorn.conf.py), so the global limit
+    holds approximately but a client pinned to one worker sees limit/workers.
   - Dedicated authentication failure tracking & brute-force lockout.
   - Standard RFC / IETF-style rate limit headers (X-RateLimit-Limit, Remaining, Reset, Retry-After).
   - Tiered allowance for media segments and proxy downloads.
@@ -85,12 +88,14 @@ class RateLimiter:
 
     def _get_effective_max(self, max_override: int | None = None) -> int:
         base_max = max_override if max_override is not None else self._max
-        if not self._redis and self._worker_count > 1:
+        # Only reached on the in-memory path (no Redis, or Redis erroring), where each
+        # worker keeps its own counters: split the budget so the sum stays <= limit.
+        if self._worker_count > 1:
             return max(1, base_max // self._worker_count)
         return base_max
 
     def _get_effective_auth_max(self) -> int:
-        if not self._redis and self._worker_count > 1:
+        if self._worker_count > 1:
             return max(1, self._auth_max // self._worker_count)
         return self._auth_max
 
@@ -216,9 +221,7 @@ class RateLimiter:
 
         now = time.time()
         effective_max = (
-            max(1, limit // self._worker_count)
-            if (not self._redis and self._worker_count > 1)
-            else limit
+            max(1, limit // self._worker_count) if self._worker_count > 1 else limit
         )
 
         if ip not in self._media_requests:
